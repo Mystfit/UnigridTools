@@ -1,3 +1,6 @@
+import os
+from pymel.core import *
+
 from .RenderJob import RenderJob
 
 class AnimRenderJob(RenderJob):
@@ -12,17 +15,20 @@ class AnimRenderJob(RenderJob):
         self.static_nodes = kwargs["static_nodes"] if "static_nodes" in kwargs else None
         self.manifest["frames"] = []
 
+        self.image_path = os.path.normpath(os.path.join(self.wd, "images"))
+        self.tile_path = os.path.normpath(os.path.join(self.wd, "images", "tiles"))
+        self.static_path = os.path.normpath(os.path.join(self.wd_ass, "static"))
+
     def init_render_options(self):
-        super(AnimRenderJob, self).init_render_options()
+        if not super(AnimRenderJob, self).init_render_options():
+            return False
         self.orig_leftRegion = self.arnold_opts.regionMinX.get()
         self.orig_rightRegion = self.arnold_opts.regionMaxX.get()
         self.orig_topRegion = self.arnold_opts.regionMinY.get()
         self.orig_bottomRegion = self.arnold_opts.regionMaxY.get()
-        
-        self.image_path = os.path.normpath(os.path.join(self.wd, "images"))
-        self.tile_path = os.path.normpath(os.path.join(self.wd, "images", "tiles"))
-        self.static_path = os.path.normpath(os.path.join(self.wd_ass, "static"))
-        self.anim_path = os.path.normpath(os.path.join(self.wd_ass, "frames"))
+        return True
+
+    def cleanup_workspace(self):
         workspace.mkdir(self.tile_path)
         workspace.mkdir(self.static_path)
         workspace.mkdir(self.anim_path)
@@ -54,7 +60,7 @@ class AnimRenderJob(RenderJob):
         super(AnimRenderJob, self).gather_assets()
 
 
-    def export_scenes(self):
+    def export_scene(self):
         # Export new camera ass scene with render region set
         resource_args = { 
             "asciiAss": True,
@@ -85,73 +91,7 @@ class AnimRenderJob(RenderJob):
             # Advance timeline
             print("Exporting frame {}".format(frame))
             animation.currentTime(frame)
-
-            # Create frame args
-            animated_resource_args = {
-                "f": "{}.{}".format(os.path.normpath(os.path.join(self.anim_path, self.ass_filename_prefix)), str(frame).zfill(4)),
-                "mask": AI_NODE_ALL ^ MAYA_COLOUR_MANAGER
-            }
-            anim_nodes = []
-            if self.animated_nodes:
-                anim_nodes = self.animated_nodes
-                animated_resource_args["s"] = True
-            animated_resource_args.update(resource_args)
-
-            # Export animated resources
-            arnoldExportAss(*anim_nodes, **animated_resource_args)
-            resources = ["{}.ass".format(os.path.relpath(animated_resource_args["f"], self.wd))] + static_resources
-            
-            # Export tiles
-            resolution = ls('defaultResolution')[0]
-            tiles = []
-            if self.dynamic_tiles:
-                print("Getting dynamic tiles")
-                tiles = self.export_frame_tiles(frame, 1, 1, resolution.width.get(), resolution.height.get())
-            else:
-                print("Getting regular tiles")
-                tiles = self.export_frame_tiles(frame, self.rows, self.cols, resolution.width.get(), resolution.height.get())
-
-            # Group frame/tile resources into manifest
-            self.manifest["frames"].append({
-                "outfile": "{}.{}".format(os.path.relpath(os.path.join(self.image_path, os.path.basename(animated_resource_args["f"])), self.wd), self.file_extension),
-                "res_x": resolution.width.get(),
-                "res_y": resolution.height.get(),
-                "resources": resources,
-                "tiles": tiles
-            })
-
-
-    def export_frame_tiles(self, frame, rows, cols, width, height):
-        tile_width = abs(width / cols)
-        tile_height = abs(height / rows)
-        tile_leftover_width = width % cols
-        tile_leftover_height= height % rows
-        tiles = []
-
-        for col in range(cols):
-            # Create tile coordinates
-            tile_left = col * tile_width
-            tile_right = (col + 1) * tile_width 
-            if col == cols - 1:
-                tile_right += tile_leftover_width
-            for row in range(rows):
-                tile_top = row * tile_height
-                tile_bottom = (row + 1) * tile_height
-                if row == rows - 1:
-                    tile_bottom += tile_leftover_height
-
-                # Export tile
-                coords = [tile_left, tile_top, tile_right, tile_bottom]
-                print("Adding tile {}x, {}y".format(col, row))
-                tiles.append({
-                    "outfile": "{}_tile_{}-{}.{}.{}".format(os.path.relpath(os.path.join(self.tile_path, self.ass_filename_prefix), self.wd), col, row, str(frame).zfill(4), self.file_extension),
-                    "coords": coords,
-                    "kick_flags": {
-                        "rg": " ".join(str(tile) for tile in coords)
-                    }
-                })
-
-        return tiles
+            RenderJob.export_frame(self)
 
     def cleanup_render_options(self):
         super(AnimRenderJob, self).cleanup_render_options()

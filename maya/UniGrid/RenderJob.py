@@ -1,8 +1,21 @@
+from pymel.core import *
+
 from functools import partial
 import os, json
 
+class RenderJobException(Exception):
+    pass
+
+class RenderJobAssetException(Exception):
+    MISSING_TEXTURES = 0
+
+    def __init__(self, error_type, data):
+        self.error_type = error_type
+        self.data = data
+
 class RenderJob(object):
     def __init__(self, **kwargs):
+        # Create paths
         self.unigrid_wd = os.path.normpath(os.path.join(workspace.getPath(), 'data', 'unigrid'))
         self.texture_folder_name = os.path.join("textures", "sourceimages")
         self.procedural_folder_name = "procedurals"
@@ -10,9 +23,11 @@ class RenderJob(object):
         self.ass_folder_name = os.path.join("ass", os.path.basename(os.path.splitext(system.sceneName())[0]))
         self.wd = os.path.normpath(os.path.join(self.unigrid_wd, os.path.basename(workspace.getName())))
         self.wd_textures = os.path.normpath(os.path.join(self.wd, self.texture_folder_name))
-        self.wd_procedurals = os.path.normpath(os.path.joinself.wd, self.procedural_folder_name)
+        self.wd_procedurals = os.path.normpath(os.path.join(self.wd, self.procedural_folder_name))
         self.wd_ass = os.path.normpath(os.path.join(self.wd, self.ass_folder_name))
+        self.anim_path = os.path.normpath(os.path.join(self.wd_ass, "frames"))
 
+        # Create manifest
         self.manifest = {}
         self.manifest["textures"] = []
         self.manifest["kick_flags"] = {}
@@ -22,10 +37,17 @@ class RenderJob(object):
         self.file_extension = os.path.splitext(rendering.renderSettings(firstImageName=True)[0])[1][1:]
         self.zip_path = os.path.join(self.unigrid_wd, os.path.basename(workspace.getName())) + ".zip"
         self.missing_textures = []
-        self.export_success = True
-        self.init_render_options()
 
-    def init_render_options(self):
+    def export(self):
+        self.init_render_options()
+        self.cleanup_workspace()
+        self.gather_assets()
+        self.export_scenes()
+        self.update_manifest()
+        self.zip_results()
+        self.cleanup_render_options()
+
+    def cleanup_workspace(self):
         workspace.mkdir(self.wd)
         workspace.mkdir(self.wd_textures)
         workspace.mkdir(self.wd_procedurals)
@@ -34,8 +56,13 @@ class RenderJob(object):
         cleanup_folder(self.wd_procedurals)
         cleanup_folder(self.wd_ass)
 
+    def init_render_options(self):
         # Get render option nodes
-        self.arnold_opts = ls('defaultArnoldRenderOptions')[0]
+        arnold_opt_nodes = ls('defaultArnoldRenderOptions')
+        if not arnold_opt_nodes:
+            raise RenderJobException("Missing Arnold options. Please open the Render Settings window at least once.")
+
+        self.arnold_opts = arnold_opt_nodes[0]
         self.default_render_globals = ls('defaultRenderGlobals')[0]
 
         # Save original Arnold settings
@@ -45,14 +72,7 @@ class RenderJob(object):
         # Set Arnold properties
         self.arnold_opts.absoluteTexturePaths.set(0)
         self.arnold_opts.abortOnLicenseFail.set(1)
-
-    def start(self):
-        self.gather_assets()
-        self.export_scenes()
-        self.update_manifest()
-        if self.export_success:
-            self.zip_results()
-        self.cleanup_render_options()
+        return True
 
     def gather_assets(self):
         # Copy aiImage nodes
@@ -68,13 +88,75 @@ class RenderJob(object):
                 self.manifest["textures"].append(copied_tx)
 
         if self.missing_textures:
-            self.export_success = False
-            self.missing_textures_dialog()
-            # layoutDialog(ui=self.missing_textures_dialog)
-            # confirmDialog(title="Uni-grid error", message="Your scene has missing textures.\n\n{}".format(missing_textures))
+            raise RenderJobAssetException(RenderJobAssetException.MISSING_TEXTURES, self.missing_textures)
 
-    def export_scenes(start_frame=-1, end_frame=-1):
-        raise RuntimeException("Not implemented")
+    def export_scene(self):
+        # Create frame args
+        frame = currentTime(query=True)
+        animated_resource_args = {
+            "f": "{}.{}".format(os.path.normpath(os.path.join(self.anim_path, self.ass_filename_prefix)), str(frame).zfill(4)),
+            "mask": AI_NODE_ALL ^ MAYA_COLOUR_MANAGER
+        }
+        anim_nodes = []
+        if self.animated_nodes:
+            anim_nodes = self.animated_nodes
+            animated_resource_args["s"] = True
+        animated_resource_args.update(resource_args)
+
+        # Export animated resources
+        arnoldExportAss(*anim_nodes, **animated_resource_args)
+        resources = ["{}.ass".format(os.path.relpath(animated_resource_args["f"], self.wd))] + static_resources
+        
+        # Export tiles
+        resolution = ls('defaultResolution')[0]
+        tiles = []
+        if self.dynamic_tiles:
+            print("Getting dynamic tiles")
+            tiles = self.export_tiles(frame, 1, 1, resolution.width.get(), resolution.height.get())
+        else:
+            print("Getting regular tiles")
+            tiles = self.export_tiles(frame, self.rows, self.cols, resolution.width.get(), resolution.height.get())
+
+        # Group frame/tile resources into manifest
+        self.manifest["frames"].append({
+            "outfile": "{}.{}".format(os.path.relpath(os.path.join(self.image_path, os.path.basename(animated_resource_args["f"])), self.wd), self.file_extension),
+            "res_x": resolution.width.get(),
+            "res_y": resolution.height.get(),
+            "resources": resources,
+            "tiles": tiles
+        })
+
+    def export_tiles(self, frame, rows, cols, width, height):
+        tile_width = abs(width / cols)
+        tile_height = abs(height / rows)
+        tile_leftover_width = width % cols
+        tile_leftover_height= height % rows
+        tiles = []
+
+        for col in range(cols):
+            # Create tile coordinates
+            tile_left = col * tile_width
+            tile_right = (col + 1) * tile_width 
+            if col == cols - 1:
+                tile_right += tile_leftover_width
+            for row in range(rows):
+                tile_top = row * tile_height
+                tile_bottom = (row + 1) * tile_height
+                if row == rows - 1:
+                    tile_bottom += tile_leftover_height
+
+                # Export tile
+                coords = [tile_left, tile_top, tile_right, tile_bottom]
+                print("Adding tile {}x, {}y".format(col, row))
+                tiles.append({
+                    "outfile": "{}_tile_{}-{}.{}.{}".format(os.path.relpath(os.path.join(self.tile_path, self.ass_filename_prefix), self.wd), col, row, str(frame).zfill(4), self.file_extension),
+                    "coords": coords,
+                    "kick_flags": {
+                        "rg": " ".join(str(tile) for tile in coords)
+                    }
+                })
+
+        return tiles
 
     def update_manifest(self):
         # Manifest vars
@@ -124,24 +206,6 @@ class RenderJob(object):
             return None
         return os.path.relpath(os.path.join(dest_path, source_file), path_prefix)
 
-    def missing_textures_dialog(self):
-        missing_textures_win = window(title="Uni-grid export error", width=500, height=220)
-        missing_textures_win.show()
-
-        layout = columnLayout(adjustableColumn=True, height=200, rowSpacing=4, columnAlign="left", parent=missing_textures_win)
-        text(label='The following nodes have missing tx files (click to select):', align="left", parent=layout)
-        missing_texture_list = textScrollList("missing_texture_list", height=200, parent=layout)
-        textScrollList(missing_texture_list, edit=True, sc=partial(goto_missing_texture, missing_texture_list))
-        for tex in self.missing_textures:
-            missing_texture_list.append(tex.name())
-
-
-def goto_missing_texture(scrollList):
-    node = textScrollList(scrollList, query=True, si=True)
-    if node:
-        print("Missing texture node: {}".format(node[0]))
-        select(node[0])
-    return ""
 
 def cleanup_folder(path):
     for f in os.listdir(path):
