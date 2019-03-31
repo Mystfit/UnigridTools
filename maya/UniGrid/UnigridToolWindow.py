@@ -1,13 +1,15 @@
 from pymel.core import *
 from pymel import *
-from arnold import *
 
 import os, sys, ssl, mechanize, platform, threading
-from shutil import copy2, make_archive
 
-from AnimRenderJob import AnimRenderJob
+import RenderJob
+reload(RenderJob)
 from RenderJob import RenderJobException, RenderJobAssetException
 
+import AnimRenderJob
+reload(AnimRenderJob)
+from AnimRenderJob import AnimRenderJob
 
 def popenAndCall(popenArgs, onExit):
     """
@@ -133,6 +135,7 @@ class UnigridToolWindow(object):
         self.password_field.setText("*" * len(self.password_field.getText()))
 
     def export(self):
+        print("Exporting...")
         cam = ls(self.camera_list.getValue())[0]
         render_kwargs = {
             'cam': cam,
@@ -154,11 +157,8 @@ class UnigridToolWindow(object):
             return renderjob
         except RenderJobException as e:
             confirmDialog(title="Uni-grid Error", message=str(e))
-        except RenderJobAssetException as e:
-            if e.error_type == RenderJobException.MISSING_TEXTURES:
-                self.missing_textures_dialog(e.data)
-            else:
-                confirmDialog(title="Uni-grid error", message="Unknown job asset error")
+        except MissingAssetException as e:
+            self.missing_assets_dialog(e.missing_assets)
 
         return None
 
@@ -272,22 +272,22 @@ class UnigridToolWindow(object):
     def stitch_complete(self):
         confirmDialog(title="Uni-grid", message="Tile stitching complete.")
 
-    def missing_textures_dialog(self, missing_texture_nodes):
-        missing_textures_win = window(title="Uni-grid export error", width=500, height=220)
-        missing_textures_win.show()
+    def missing_assets_dialog(self, missing_asset_nodes):
+        missing_assets_win = window(title="Uni-grid export error", width=500, height=220)
+        missing_assets_win.show()
 
-        layout = columnLayout(adjustableColumn=True, height=200, rowSpacing=4, columnAlign="left", parent=missing_textures_win)
-        text(label='The following nodes have missing tx files (click to select):', align="left", parent=layout)
-        missing_texture_list = textScrollList("missing_texture_list", height=200, parent=layout)
-        textScrollList(missing_texture_list, edit=True, sc=partial(goto_missing_texture, missing_texture_list))
-        for tex in missing_textures:
-            missing_texture_list.append(tex.name())
+        layout = columnLayout(adjustableColumn=True, height=200, rowSpacing=4, columnAlign="left", parent=missing_assets_win)
+        text(label='The following nodes have missing external dependencies. Check your paths!\nClick to select:', align="left", parent=layout)
+        missing_asset_list = textScrollList("missing_texture_list", height=200, parent=layout)
+        textScrollList(missing_asset_list, edit=True, sc=partial(goto_missing_asset, missing_asset_list))
+        for asset in missing_asset_nodes:
+            missing_asset_list.append(asset.name())
 
 
-def goto_missing_texture(scrollList):
+def goto_missing_asset(scrollList):
     node = textScrollList(scrollList, query=True, si=True)
     if node:
-        print("Missing texture node: {}".format(node[0]))
+        print("Missing asset node: {}".format(node[0]))
         select(node[0])
     return ""
 

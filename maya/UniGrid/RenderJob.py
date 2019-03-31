@@ -1,7 +1,11 @@
-from pymel.core import *
-
 from functools import partial
 import os, json
+from shutil import copy2, make_archive
+
+from pymel.core import *
+from arnold import *
+import Utils
+
 
 class RenderJobException(Exception):
     pass
@@ -37,12 +41,17 @@ class RenderJob(object):
         self.file_extension = os.path.splitext(rendering.renderSettings(firstImageName=True)[0])[1][1:]
         self.zip_path = os.path.join(self.unigrid_wd, os.path.basename(workspace.getName())) + ".zip"
         self.missing_textures = []
+        self.default_resource_args = { 
+            "asciiAss": True,
+            "cam": self.camera.name()
+        }
+
 
     def export(self):
         self.init_render_options()
         self.cleanup_workspace()
         self.gather_assets()
-        self.export_scenes()
+        self.export_scene()
         self.update_manifest()
         self.zip_results()
         self.cleanup_render_options()
@@ -52,9 +61,9 @@ class RenderJob(object):
         workspace.mkdir(self.wd_textures)
         workspace.mkdir(self.wd_procedurals)
         workspace.mkdir(self.wd_ass)
-        cleanup_folder(self.wd_textures)
-        cleanup_folder(self.wd_procedurals)
-        cleanup_folder(self.wd_ass)
+        Utils.cleanup_folder(self.wd_textures)
+        Utils.cleanup_folder(self.wd_procedurals)
+        Utils.cleanup_folder(self.wd_ass)
 
     def init_render_options(self):
         # Get render option nodes
@@ -91,6 +100,8 @@ class RenderJob(object):
             raise RenderJobAssetException(RenderJobAssetException.MISSING_TEXTURES, self.missing_textures)
 
     def export_scene(self):
+        MAYA_COLOUR_MANAGER = 2048
+
         # Create frame args
         frame = currentTime(query=True)
         animated_resource_args = {
@@ -101,11 +112,11 @@ class RenderJob(object):
         if self.animated_nodes:
             anim_nodes = self.animated_nodes
             animated_resource_args["s"] = True
-        animated_resource_args.update(resource_args)
+        animated_resource_args.update(self.default_resource_args)
 
         # Export animated resources
         arnoldExportAss(*anim_nodes, **animated_resource_args)
-        resources = ["{}.ass".format(os.path.relpath(animated_resource_args["f"], self.wd))] + static_resources
+        resources = ["{}.ass".format(os.path.relpath(animated_resource_args["f"], self.wd))] + self.shared_resources
         
         # Export tiles
         resolution = ls('defaultResolution')[0]
@@ -184,9 +195,9 @@ class RenderJob(object):
 
     def cleanup_render_options(self):
         # Reset original arnold values
-        self.arnold_opts = ls('defaultArnoldRenderOptions')[0]
-        self.arnold_opts.absoluteTexturePaths.set(self.orig_absTexOpt)
-        self.arnold_opts.abortOnLicenseFail.set(self.orig_abortOnLicenseFail) 
+        arnold_opts = ls('defaultArnoldRenderOptions')[0]
+        arnold_opts.absoluteTexturePaths.set(self.orig_absTexOpt)
+        arnold_opts.abortOnLicenseFail.set(self.orig_abortOnLicenseFail) 
 
     # Copy textures helper function
     def copy_tx(self, node, file_path, path_prefix, dest_path):
@@ -205,15 +216,3 @@ class RenderJob(object):
             self.missing_textures.append(node)
             return None
         return os.path.relpath(os.path.join(dest_path, source_file), path_prefix)
-
-
-def cleanup_folder(path):
-    for f in os.listdir(path):
-        f_path = os.path.join(path, f)
-        try:
-            if os.path.isfile(f_path):
-                os.unlink(f_path)
-            elif os.path.isdir(f_path): 
-                shutil.rmtree(f_path)
-        except Exception as e:
-            print(e)

@@ -1,10 +1,9 @@
 import sys
 import maya.api.OpenMaya as om
-import UniGrid
-from UniGrid.ResetSession import resetSessionForScript
-resetSessionForScript(UniGrid.__file__)
 
-from UniGrid.UnigridToolWindow import UnigridToolWindow
+from UniGrid import ResetSession
+import UniGrid
+import UniGrid.UnigridToolWindow as UnigridToolWindow
 
 def maya_useNewAPI():
     """
@@ -28,13 +27,14 @@ class UnigridTools(om.MPxCommand):
 
     def doIt(self, args):
         if not self.unigrid_tool_window:
-            self.unigrid_tool_window = UnigridToolWindow()
+            self.unigrid_tool_window = UnigridToolWindow.UnigridToolWindow()
             self.unigrid_tool_window.create_GUI()
         self.unigrid_tool_window.show_GUI()
 
 
 # Initialize the plug-in
 def initializePlugin(plugin):
+    ResetSession.resetSession()
     pluginFn = om.MFnPlugin(plugin)
     try:
         pluginFn.registerCommand(

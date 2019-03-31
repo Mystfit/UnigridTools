@@ -1,13 +1,13 @@
 import inspect
 import sys
-from os.path import dirname 
+import os
 
 # I'm going to define this little function to make this cleaner
 # It's going to have a flag to let you specify the userPath you want to clear out
 # But otherwise I'd going to assume that it's the userPath you're running the script from (__file__) 
 def resetSessionForScript(userPath=None):
     if userPath is None:
-      userPath = dirname(__file__)
+      userPath = os.path.dirname(__file__)
     # Convert this to lower just for a clean comparison later  
     userPath = userPath.lower()
 
@@ -35,3 +35,12 @@ def resetSessionForScript(userPath=None):
     # broken the loop. So now we go over the list we made and delete all the modules
     for module in toDelete:
         del (sys.modules[module])
+
+
+def resetSession():
+  print("Resetting modules")
+  base_module_path = os.path.dirname(__file__)
+  resetSessionForScript(os.path.join(base_module_path, "UnigridToolWindow"))
+  resetSessionForScript(os.path.join(base_module_path, "RenderJob"))
+  resetSessionForScript(os.path.join(base_module_path, "AnimRenderJob"))
+  resetSessionForScript(os.path.join(base_module_path, "Utils"))

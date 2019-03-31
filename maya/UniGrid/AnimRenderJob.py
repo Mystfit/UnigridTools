@@ -1,7 +1,9 @@
 import os
 from pymel.core import *
+from arnold import *
 
-from .RenderJob import RenderJob
+from RenderJob import RenderJob
+import Utils
 
 class AnimRenderJob(RenderJob):
     def __init__(self, start_frame, end_frame, **kwargs):
@@ -13,6 +15,7 @@ class AnimRenderJob(RenderJob):
         self.rows = kwargs["rows"] if "rows" in kwargs and not self.dynamic_tiles else 1
         self.animated_nodes = kwargs["animated_nodes"] if "animated_nodes" in kwargs else None
         self.static_nodes = kwargs["static_nodes"] if "static_nodes" in kwargs else None
+        self.shared_resources = []
         self.manifest["frames"] = []
 
         self.image_path = os.path.normpath(os.path.join(self.wd, "images"))
@@ -32,9 +35,9 @@ class AnimRenderJob(RenderJob):
         workspace.mkdir(self.tile_path)
         workspace.mkdir(self.static_path)
         workspace.mkdir(self.anim_path)
-        cleanup_folder(self.tile_path)
-        cleanup_folder(self.static_path)
-        cleanup_folder(self.anim_path)
+        Utils.cleanup_folder(self.tile_path)
+        Utils.cleanup_folder(self.static_path)
+        Utils.cleanup_folder(self.anim_path)
 
     def gather_assets(self):
         # Copy file nodes
@@ -61,12 +64,6 @@ class AnimRenderJob(RenderJob):
 
 
     def export_scene(self):
-        # Export new camera ass scene with render region set
-        resource_args = { 
-            "asciiAss": True,
-            "cam": self.camera.name()
-        }
-
         MAYA_COLOUR_MANAGER = 2048
 
         # Args for the static ass scene
@@ -74,9 +71,8 @@ class AnimRenderJob(RenderJob):
             "f": "{}_static".format(os.path.normpath(os.path.join(self.static_path, self.ass_filename_prefix))),
             "mask": AI_NODE_ALL ^ AI_NODE_OPTIONS ^ AI_NODE_DRIVER ^ AI_NODE_FILTER ^ MAYA_COLOUR_MANAGER
         }
-        static_resource_args.update(resource_args)
+        static_resource_args.update(self.default_resource_args)
 
-        static_resources = []
         if self.static_nodes:
             static_nodes = self.static_nodes if self.static_nodes else []
             # Remove animated nodes from static resources
@@ -84,14 +80,14 @@ class AnimRenderJob(RenderJob):
 
             # Export static resources
             arnoldExportAss(*static_nodes, **static_resource_args)
-            static_resources.append("{}.ass".format(os.path.relpath(static_resource_args["f"], self.wd)))
+            self.shared_resources.append("{}.ass".format(os.path.relpath(static_resource_args["f"], self.wd)))
 
         # Export tiles per frame
         for frame in range(self.start_frame, self.end_frame + 1):
             # Advance timeline
             print("Exporting frame {}".format(frame))
             animation.currentTime(frame)
-            RenderJob.export_frame(self)
+            super(AnimRenderJob, self).export_scene()
 
     def cleanup_render_options(self):
         super(AnimRenderJob, self).cleanup_render_options()
