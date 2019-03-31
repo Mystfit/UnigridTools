@@ -1,4 +1,3 @@
-from functools import partial
 import os, json
 from shutil import copy2, make_archive
 
@@ -10,12 +9,9 @@ import Utils
 class RenderJobException(Exception):
     pass
 
-class RenderJobAssetException(Exception):
-    MISSING_TEXTURES = 0
-
-    def __init__(self, error_type, data):
-        self.error_type = error_type
-        self.data = data
+class MissingAssetException(Exception):
+    def __init__(self, data):
+        self.missing_assets = data
 
 class RenderJob(object):
     def __init__(self, **kwargs):
@@ -45,7 +41,6 @@ class RenderJob(object):
             "asciiAss": True,
             "cam": self.camera.name()
         }
-
 
     def export(self):
         self.init_render_options()
@@ -97,17 +92,19 @@ class RenderJob(object):
                 self.manifest["textures"].append(copied_tx)
 
         if self.missing_textures:
-            raise RenderJobAssetException(RenderJobAssetException.MISSING_TEXTURES, self.missing_textures)
+            raise MissingAssetException(self.missing_textures)
 
     def export_scene(self):
         MAYA_COLOUR_MANAGER = 2048
 
         # Create frame args
-        frame = currentTime(query=True)
+        frame = int(currentTime(query=True))
         animated_resource_args = {
             "f": "{}.{}".format(os.path.normpath(os.path.join(self.anim_path, self.ass_filename_prefix)), str(frame).zfill(4)),
             "mask": AI_NODE_ALL ^ MAYA_COLOUR_MANAGER
         }
+
+        # Add animated nodes to select flag
         anim_nodes = []
         if self.animated_nodes:
             anim_nodes = self.animated_nodes
@@ -158,7 +155,6 @@ class RenderJob(object):
 
                 # Export tile
                 coords = [tile_left, tile_top, tile_right, tile_bottom]
-                print("Adding tile {}x, {}y".format(col, row))
                 tiles.append({
                     "outfile": "{}_tile_{}-{}.{}.{}".format(os.path.relpath(os.path.join(self.tile_path, self.ass_filename_prefix), self.wd), col, row, str(frame).zfill(4), self.file_extension),
                     "coords": coords,
@@ -182,9 +178,9 @@ class RenderJob(object):
         self.manifest["kick_flags"]["o"] ="<OUT_FILE>"
 
         # Write manifest
-        manifest_filepath = os.path.join(self.wd, 'manifest.json')
-        with open(manifest_filepath, 'w') as outfile:
-            print("Writing manifest to " + manifest_filepath)
+        self.manifest_filepath = os.path.join(self.wd, 'manifest.json')
+        with open(self.manifest_filepath, 'w') as outfile:
+            print("Writing manifest to " + self.manifest_filepath)
             manifest_s = json.dumps(self.manifest, indent=True).replace("\\\\", "/")
             outfile.write(manifest_s)
 
@@ -203,11 +199,19 @@ class RenderJob(object):
     def copy_tx(self, node, file_path, path_prefix, dest_path):
         if not file_path or not dest_path:
             return None
+        rel_path = None
 
-        rel_path = os.path.relpath(file_path, path_prefix)
+        try:
+            rel_path = os.path.relpath(file_path, path_prefix)
+        except ValueError as e:
+            print("Value during texture copy: {}".format(e))
+            self.missing_textures.append(node)
+            return None
+
         source_file = "{}.tx".format(os.path.splitext(file_path)[0])
         dest_path = os.path.join(dest_path, os.path.dirname(rel_path))
         workspace.mkdir(dest_path)
+
         print("Copying {} to {}".format(source_file, dest_path))
         try:
             copy2(source_file, dest_path)
@@ -215,4 +219,5 @@ class RenderJob(object):
             print("Exception during texture copy: {}".format(e))
             self.missing_textures.append(node)
             return None
+
         return os.path.relpath(os.path.join(dest_path, source_file), path_prefix)

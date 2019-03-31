@@ -2,13 +2,15 @@ from pymel.core import *
 from pymel import *
 
 import os, sys, ssl, mechanize, platform, threading
+from functools import partial
+from bs4 import BeautifulSoup
 
 import RenderJob
-reload(RenderJob)
-from RenderJob import RenderJobException, RenderJobAssetException
+# reload(RenderJob)
+from RenderJob import RenderJobException, MissingAssetException
 
 import AnimRenderJob
-reload(AnimRenderJob)
+# reload(AnimRenderJob)
 from AnimRenderJob import AnimRenderJob
 
 def popenAndCall(popenArgs, onExit):
@@ -67,10 +69,14 @@ class UnigridToolWindow(object):
 
         # Tile stitching
         job_path_attachments = ["left", "left", "right"]
-        self.job_path_layout = rowLayout(parent=self.tile_layout, numberOfColumns=3, columnAttach3=job_path_attachments, columnAlign3=job_path_attachments, adjustableColumn=2)
-        self.tiles_path_label = text(label='Tile path:', parent=self.job_path_layout)
-        self.tiles_path = textField(text="/Volumes/uni-grid/renders/[YOUR_USER_NAME]/[JOB_ID]", parent=self.job_path_layout)
-        self.tiles_path_browse_btn = iconTextButton(style="iconOnly", image1="folder-open.png", parent=self.job_path_layout)
+        self.manifest_path_layout = rowLayout(parent=self.tile_layout, numberOfColumns=3, columnAttach3=job_path_attachments, columnAlign3=job_path_attachments, adjustableColumn=2)
+        self.manifest_path_label = text(label='Job manifest path:', parent=self.manifest_path_layout)
+        self.manifest_path = textField(text="/Volumes/uni-grid/projects/[JOB_ID]", parent=self.manifest_path_layout)
+        self.manifest_path_browse_btn = iconTextButton(style="iconOnly", image1="folder-open.png", parent=self.manifest_path_layout)
+        self.tiles_path_layout = rowLayout(parent=self.tile_layout, numberOfColumns=3, columnAttach3=job_path_attachments, columnAlign3=job_path_attachments, adjustableColumn=2)
+        self.tiles_path_label = text(label='Tile path:', parent=self.tiles_path_layout)
+        self.tiles_path = textField(text="/Volumes/uni-grid/renders/[YOUR_USER_NAME]/[JOB_ID]", parent=self.tiles_path_layout)
+        self.tiles_path_browse_btn = iconTextButton(style="iconOnly", image1="folder-open.png", parent=self.tiles_path_layout)
         self.stitch_btn = button(label="Stitch tiles", parent=self.tile_layout)
 
         # Exported objects
@@ -118,6 +124,7 @@ class UnigridToolWindow(object):
         self.remove_anim_shape_btn.setCommand(self.removeAnimPressed)
         self.add_static_shape_btn.setCommand(self.addStaticPressed)
         self.remove_static_shape_btn.setCommand(self.removeStaticPressed)
+        self.manifest_path_browse_btn.setCommand(self.setManifestPathPressed)
         self.tiles_path_browse_btn.setCommand(self.setTilePathPressed)
         self.stitch_btn.setCommand(self.stitchPressed)
 
@@ -163,29 +170,40 @@ class UnigridToolWindow(object):
         return None
 
     def upload(self, job):
+        # URLs
         unigrid_url = 'https://uni-grid.mddn.vuw.ac.nz'
         unigrid_login_url = unigrid_url + "/login"
-        unigrid_new_job_url = unigrid_url + "/jobs/new"
+        unigrid_jobs_url = unigrid_url + "/jobs"
+        unigrid_new_job_url = unigrid_jobs_url + "/new"
 
+        # Set up mechanize
         ssl._create_default_https_context = ssl._create_unverified_context
         br = mechanize.Browser()
         br.set_handle_robots(False) # ignore robots
+
+        # Get login page
         br.open(unigrid_login_url)
         form = br.select_form(nr=0)
         br.set_all_readonly(False)
 
+        # Set login values
         br.set_value(self.login_field.getText(), name="user[short_name]")
         br.set_value(self.password, name="user[password]")
         res = br.submit()
+
+        # Check login success
         if res.geturl() == unigrid_login_url:
             print("Login failed")
             confirmDialog(title="Uni-grid", message="Uni-grid login rejected. Check your username and password.")
             return        
         print("Login successful")
 
+        # Get new job page
         br.open(unigrid_new_job_url)
         br.select_form(id="new_job")
         br["job[job_type]"] = ["Arnold"]
+
+        # Set job variables
         br.set_value(self.email_field.getText(), name="job[email]")
         br.set_value(os.path.basename(system.sceneName()), name="job[scene]")
         br.set_value(str(self.start_frame.getValue()), name="job[start_frame]")
@@ -193,24 +211,39 @@ class UnigridToolWindow(object):
         br.form.add_file(open(job.zip_path, 'rb'), 'application/zip', job.zip_path, name="job[project_zip]")
         res = br.submit()
 
+        # Check job submission success
         job_id = None
-        if res.geturl() == unigrid_new_job_url:
-            print(res.read())
-            confirmDialog(title="Uni-grid error", message="Uni-grid server rejected the render job. Check your settings.")
+        print("Response URL: {}".format(res.geturl()))
+        print("Comparing {} to {}".format(res.geturl(), unigrid_jobs_url))
+        if res.geturl() == unigrid_jobs_url:
+            soup = BeautifulSoup(res.read())
+            error_str = ""
+            for error in soup.find('div', id="error_explanation").find_all('li'):
+                error_str += "- {}\n".format(error.string)
+            errors = [error.string + "\n" ]
+            confirmDialog(title="Uni-grid error", message="Server rejected the render job.\n\n{}".format(error_str))
             return
         
+        # Get new job ID from the returned URL
         job.job_id = res.geturl().split("/")[-1]
+
+        # Autofill tile and manifest paths
+        manifest_path = ""
         job_tile_render_path = ""
         if platform.system() == "Windows":
+            manifest_path = "\\\\uni-grid.mddn.vuw.ac.nz\\uni-grid\\projects\\{}".format(job.job_id)
             job_tile_render_path = "\\\\uni-grid.mddn.vuw.ac.nz\\uni-grid\\renders\\{}\\{}".format(self.login_field.getText(), job.job_id)
         elif platform.system() == "Darwin":
+            manifest_path = "/Volumes/uni-grid/projects/{}".format(job.job_id)
             job_tile_render_path = "/Volumes/uni-grid/renders/{}/{}".format(self.login_field.getText(), job.job_id)
+        self.manifest_path.setText(os.path.join(manifest_path, 'manifest.json'))
         self.tiles_path.setText(job_tile_render_path)
         confirmDialog(title="Uni-grid", message="Render submitted successfully.\n\nJob ID: {}".format(job.job_id))
 
     # Callback functions
     def exportPressed(self, *args):
-        self.export()
+        job = self.export()
+        confirmDialog(title="Uni-grid", message="Manifest and zip located at\n{}".format(job.manifest_filepath))
 
     def exportAndUploadPressed(self, *args):
         job = self.export()
@@ -251,14 +284,17 @@ class UnigridToolWindow(object):
         for node in textScrollList(self.static_shape_nodes, query=True, si=True):
             self.static_shape_nodes.removeItem(node)
 
+    def setManifestPathPressed(self, *args):
+        self.manifest_path.setText(promptForFolder())
+
     def setTilePathPressed(self, *args):
         self.tiles_path.setText(promptForFolder())
 
     def stitchPressed(self, *args):
-        stitch_script_path = os.path.join(workspace.getPath(), "scripts", "unigrid_stitch.py")
-        manifest_path = os.path.join(self.wd, 'manifest.json')
+        local_stitch_script_path = os.path.join(os.path.dirname(__file__), "..", "..", "server", "stitch.py")
+        stitch_script_path = local_stitch_script_path
         num_threads = 8
-        stitch_cmd = [str(flag) for flag in [stitch_script_path, manifest_path, self.tiles_path.getText(), workspace.getPath(), num_threads]]
+        stitch_cmd = [str(flag) for flag in [stitch_script_path, self.manifest_path.getText(), self.tiles_path.getText(), workspace.getPath(), num_threads]]
         if platform.system() == "Darwin":
             # UUUUUUGH, hardcoded paths :(
             stitch_cmd.insert(0, "/usr/local/bin/python")

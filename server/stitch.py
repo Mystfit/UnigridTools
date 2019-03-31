@@ -18,9 +18,9 @@ if len(sys.argv) < 4:
     print("Missing arguments. Script requires manifest_path, tiles_path, images_path")
     sys.exit()
 
-manifest_path = os.path.abspath(sys.argv[1])
-tiles_path = os.path.abspath(sys.argv[2])
-images_path = os.path.abspath(sys.argv[3])
+manifest_path = sys.argv[1]
+tiles_path = sys.argv[2]
+images_path = sys.argv[3]
 num_worker_threads = int(sys.argv[4])
 stitch_queue = queue.Queue()
 
