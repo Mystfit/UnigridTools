@@ -21,7 +21,8 @@ class RenderJob(object):
         self.procedural_folder_name = "procedurals"
         self.source_tex_folder = os.path.join(workspace.getPath(), "sourceimages")
         self.ass_folder_name = os.path.join("ass", os.path.basename(os.path.splitext(system.sceneName())[0]))
-        self.wd = os.path.normpath(os.path.join(self.unigrid_wd, os.path.basename(workspace.getName())))
+        self.name = workspace.getName().replace(" ", "_")
+        self.wd = os.path.normpath(os.path.join(self.unigrid_wd, os.path.basename(self.name)))
         self.wd_textures = os.path.normpath(os.path.join(self.wd, self.texture_folder_name))
         self.wd_procedurals = os.path.normpath(os.path.join(self.wd, self.procedural_folder_name))
         self.wd_ass = os.path.normpath(os.path.join(self.wd, self.ass_folder_name))
@@ -35,7 +36,7 @@ class RenderJob(object):
         self.ass_filename_prefix = os.path.basename(os.path.splitext(sceneName())[0])
         self.default_args = {'asciiAss': True}
         self.file_extension = os.path.splitext(rendering.renderSettings(firstImageName=True)[0])[1][1:]
-        self.zip_path = os.path.join(self.unigrid_wd, os.path.basename(workspace.getName())) + ".zip"
+        self.zip_path = self.wd + ".zip"
         self.missing_textures = []
         self.default_resource_args = { 
             "asciiAss": True,
@@ -83,7 +84,7 @@ class RenderJob(object):
         for tex in ls(type='aiImage'):
             copied_tx = self.copy_tx(tex, tex.filename.get(), self.source_tex_folder, self.wd_textures)
             if copied_tx:
-                self.manifest["textures"].append(tx)
+                self.manifest["textures"].append(copied_tx)
 
         # Copy texture nodes
         for tex in ls(type='file'):
@@ -119,10 +120,8 @@ class RenderJob(object):
         resolution = ls('defaultResolution')[0]
         tiles = []
         if self.dynamic_tiles:
-            print("Getting dynamic tiles")
             tiles = self.export_tiles(frame, 1, 1, resolution.width.get(), resolution.height.get())
         else:
-            print("Getting regular tiles")
             tiles = self.export_tiles(frame, self.rows, self.cols, resolution.width.get(), resolution.height.get())
 
         # Group frame/tile resources into manifest
@@ -185,7 +184,6 @@ class RenderJob(object):
             outfile.write(manifest_s)
 
     def zip_results(self):
-        print("Creating archive at: {}".format(os.path.join(self.unigrid_wd, os.path.basename(workspace.getName()))))
         zip_path = make_archive(os.path.splitext(self.zip_path)[0], 'zip', root_dir=self.unigrid_wd, base_dir=os.path.relpath(self.wd, self.unigrid_wd))
         print("Created Unigrid archive at {}".format(self.zip_path))
 

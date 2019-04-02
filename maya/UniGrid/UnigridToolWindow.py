@@ -1,17 +1,18 @@
 from pymel.core import *
 from pymel import *
+import maya.utils
 
-import os, sys, ssl, mechanize, platform, threading
+import os, sys, ssl, platform, threading, subprocess, urllib2, urllib
 from functools import partial
+
+import mechanize
 from bs4 import BeautifulSoup
 
 import RenderJob
-# reload(RenderJob)
 from RenderJob import RenderJobException, MissingAssetException
-
 import AnimRenderJob
-# reload(AnimRenderJob)
 from AnimRenderJob import AnimRenderJob
+from Singleton import Singleton
 
 def popenAndCall(popenArgs, onExit):
     """
@@ -21,8 +22,17 @@ def popenAndCall(popenArgs, onExit):
     would give to subprocess.Popen.
     """
     def runInThread(popenArgs, onExit):
-        print("Running command {}".format(" ".join(popenArgs)))
-        os.system(" ".join(popenArgs))
+        print("Running thread command {}".format(" ".join(popenArgs)))
+        result = 0
+        try:
+            result = subprocess.check_output(" ".join(popenArgs), shell=True, stderr=subprocess.PIPE)
+        except subprocess.CalledProcessError as e:
+            onExit("Process failed with status {} and output: {}".format(e.returncode, e.output))
+            return
+
+        print("Thread complete")
+        maya.utils.executeInMainThreadWithResult(onExit, "Process complete. Result: {}".format(result))
+        # os.system(" ".join(popenArgs))
         return
 
     thread = threading.Thread(target=runInThread, args=(popenArgs, onExit))
@@ -30,69 +40,53 @@ def popenAndCall(popenArgs, onExit):
     return thread
 
 
+@Singleton
 class UnigridToolWindow(object):
+
+    def __init__(self):
+        self.stitch_server_url = "http://localhost:8000/stitch"
+        self.create_GUI()
 
     def create_GUI(self):
         # Window
         print("Creating gui")
-        self.win = window(title="Unigrid Export", width=500)
-        self.layout = columnLayout(adjustableColumn=True, rowSpacing=4, columnAlign="left", parent=self.win)
+        self.win = window(title="Unigrid Export", menuBar=True, width=500)
+        self.layout = columnLayout(adjustableColumn=True, rowSpacing=0, columnAlign="left", parent=self.win)
+        self.view_menu = menu( label='View')
+        self.show_debug_item = menuItem(label="Toggle debug items", command=self.toggle_debug_items)
 
-        # Login
+        job_path_attachments = ["left", "left", "right"]
+        frame_bg = (0.286, 0.286, 0.286)
+        row_spacing = 4
 
-        login_attachments = ["left" for i in range(6)]
-        self.login_frame = frameLayout(collapsable=False, label="Login", marginHeight=2, marginWidth=2, parent=self.layout)
-        self.login_layout = rowLayout(parent=self.login_frame, numberOfColumns=6, columnAttach6=login_attachments, columnAlign6=login_attachments, adjustableColumn=6)
-        self.password = ""
-        self.password_field = None
-
-        # self.userpass_layout = flowLayout(columnSpacing=2, parent=self.login_layout)
-        self.login_label = text(label='Username:', align='center', parent=self.login_layout)
-        self.login_field = textField(text="", width=100, parent=self.login_layout)
-        self.password_label = text(label='Password:', align='center', parent=self.login_layout)
-        self.password_field = textField(width=100, changeCommand=self.hidePassword, parent=self.login_layout)
-        
-        self.email_label = text(label='Email:', align='center', parent=self.login_layout)
-        self.email_field = textField(text="", width=100, parent=self.login_layout)
+        # Exported objects
+        self.exported_frame = frameLayout(collapse=True, collapsable=True, label="Export settings", marginHeight=2, marginWidth=2, parent=self.layout)
+        self.exported_layout = columnLayout(adjustableColumn=True, rowSpacing=row_spacing, columnAlign="left", parent=self.exported_frame)
 
         # Tiles
-        self.tile_frame = frameLayout(collapsable=True, collapse=True, label="Tiles", marginHeight=2, marginWidth=2, parent=self.layout)
-        self.tile_layout = columnLayout(adjustableColumn=True, rowSpacing=4, columnAlign="left", parent=self.tile_frame)
+        self.tile_frame = frameLayout(collapsable=True, collapse=True, label="Tiles", marginHeight=2, marginWidth=2, parent=self.exported_layout)
+        self.tile_layout = columnLayout(adjustableColumn=True, rowSpacing=row_spacing, columnAlign="left", parent=self.tile_frame)
         self.dyn_tiles_toggle = checkBox(label="Dynamic tiles", value=False, visible=False, parent=self.tile_layout)
         
         rowcol_attachments = ["left" for i in range(4)]
         self.row_col_layout = rowLayout(parent=self.tile_layout, numberOfColumns=4, columnAttach4=rowcol_attachments, columnAlign4=rowcol_attachments)
-        self.col_text = text(label="Columns:", align='center', parent=self.row_col_layout)
+        self.col_text = text(label="Columns", align='center', parent=self.row_col_layout)
         self.cols = intField(value=1, parent=self.row_col_layout, width=100)
-        self.row_text = text(label="Rows:", align='center', parent=self.row_col_layout)
+        self.row_text = text(label="Rows", align='center', parent=self.row_col_layout)
         self.rows = intField(value=1, parent=self.row_col_layout, width=100)
 
-        # Tile stitching
-        job_path_attachments = ["left", "left", "right"]
-        self.manifest_path_layout = rowLayout(parent=self.tile_layout, numberOfColumns=3, columnAttach3=job_path_attachments, columnAlign3=job_path_attachments, adjustableColumn=2)
-        self.manifest_path_label = text(label='Job manifest path:', parent=self.manifest_path_layout)
-        self.manifest_path = textField(text="/Volumes/uni-grid/projects/[JOB_ID]", parent=self.manifest_path_layout)
-        self.manifest_path_browse_btn = iconTextButton(style="iconOnly", image1="folder-open.png", parent=self.manifest_path_layout)
-        self.tiles_path_layout = rowLayout(parent=self.tile_layout, numberOfColumns=3, columnAttach3=job_path_attachments, columnAlign3=job_path_attachments, adjustableColumn=2)
-        self.tiles_path_label = text(label='Tile path:', parent=self.tiles_path_layout)
-        self.tiles_path = textField(text="/Volumes/uni-grid/renders/[YOUR_USER_NAME]/[JOB_ID]", parent=self.tiles_path_layout)
-        self.tiles_path_browse_btn = iconTextButton(style="iconOnly", image1="folder-open.png", parent=self.tiles_path_layout)
-        self.stitch_btn = button(label="Stitch tiles", parent=self.tile_layout)
-
-        # Exported objects
-        self.exported_frame = frameLayout(collapse=True, collapsable=True, label="Export settings", marginHeight=2, marginWidth=2, parent=self.layout)
-        self.exported_layout = columnLayout(adjustableColumn=True, rowSpacing=4, columnAlign="left", parent=self.exported_frame)
-
         # Cameras
-        self.camera_list = optionMenu(label="Camera", parent=self.exported_layout)
-        self.camera_list.addItems([cam.name() for cam in ls(cameras=True) if cam.renderable.get()])
+        self.camera_layout = rowLayout(parent=self.exported_layout, numberOfColumns=2, columnAttach2=["left", "right"], columnAlign2=["left", "left"], adjustableColumn=1)
+        self.camera_list = optionMenu(label="Renderable camera", parent=self.camera_layout)
+        self.refresh_cameras()
+        self.camera_refresh_button = button(label="Refresh cameras", parent=self.camera_layout)
 
         # Frames
         frame_attachments = ["left" for i in range(4)]
         self.frames_layout = rowLayout(parent=self.exported_layout, numberOfColumns=4, columnAttach4=frame_attachments, columnAlign4=frame_attachments)
-        self.start_frame_text = text(label="Start frame:", align='center', parent=self.frames_layout)
+        self.start_frame_text = text(label="Start frame", align='center', parent=self.frames_layout)
         self.start_frame = intField(value=1, parent=self.frames_layout, width=100)
-        self.end_frame_text = text(label="End frame:", align='center', parent=self.frames_layout)
+        self.end_frame_text = text(label="End frame", align='center', parent=self.frames_layout)
         self.end_frame = intField(value=1, parent=self.frames_layout, width=100)
 
         # Static nodes to export
@@ -109,24 +103,57 @@ class UnigridToolWindow(object):
         self.remove_anim_shape_btn = button(label="Remove animated node", parent=self.exported_layout)
         self.export_selective_changed()
 
-        separator(height=10, parent=self.layout)
+        # Server frame        
+        self.server_frame = frameLayout(collapsable=True, collapse=False, label="Server", marginHeight=2, marginWidth=2, parent=self.layout)
+        self.server_layout = columnLayout(adjustableColumn=True, rowSpacing=row_spacing, columnAlign="left", parent=self.server_frame)
+        
+        # Login
+        login_attachments = ["left" for i in range(6)]
+        self.login_frame = frameLayout(collapsable=True, collapse=False, label="Login", marginHeight=2, marginWidth=2, parent=self.server_layout)
+        self.login_layout = rowLayout(parent=self.login_frame, numberOfColumns=6, columnAttach6=login_attachments, columnAlign6=login_attachments, adjustableColumn=6)
+        self.password = ""
+        self.password_field = None
 
-        # Upload
-        self.upload_frame = frameLayout(collapsable=False, collapse=False, labelVisible=False, label="Upload", marginHeight=2, marginWidth=2, parent=self.layout)
-        self.upload_layout = columnLayout(adjustableColumn=True, rowSpacing=4, columnAlign="left", parent=self.upload_frame)
-        self.export_btn = button(label="Export manifest", parent=self.upload_layout)
-        self.export_upload_btn = button(label="Export and upload to Uni-grid", parent=self.upload_layout)
+        self.login_label = text(label='Username', align='center', parent=self.login_layout)
+        self.login_field = textField(text="", width=100, parent=self.login_layout)
+        self.password_label = text(label='Password', align='center', parent=self.login_layout)
+        self.password_field = textField(width=100, changeCommand=self.hidePassword, parent=self.login_layout)
+        self.email_label = text(label='Email', align='center', parent=self.login_layout)
+        self.email_field = textField(text="", width=100, parent=self.login_layout)
+
+        # Upload button
+        self.export_upload_btn = button(label="Render", parent=self.layout)
+
+        # Debug frame
+        self.debug_frame = frameLayout(collapsable=True, collapse=True, visible=False, label="Debug", marginHeight=2, marginWidth=2, parent=self.layout)
+        self.debug_layout = columnLayout(adjustableColumn=True, rowSpacing=row_spacing, columnAlign="left", parent=self.debug_frame)
+
+        self.job_id_layout = rowLayout(parent=self.debug_layout, numberOfColumns=3, columnAttach3=job_path_attachments, columnAlign3=job_path_attachments, adjustableColumn=2)
+        self.job_id_label = text(label='Job ID', parent=self.job_id_layout)
+        self.job_id_text = textField(text="0000", parent=self.job_id_layout)
+
+        local_stitch_filepath = os.path.normpath(os.path.join(os.path.dirname(__file__), "Stitch.py"))
+        self.stitch_remote_layout = rowLayout(parent=self.debug_layout, numberOfColumns=3, columnAttach3=job_path_attachments, columnAlign3=job_path_attachments, adjustableColumn=2)
+        self.stitch_url_label = text(label='Remote stitcher URL', parent=self.stitch_remote_layout)
+        self.stitch_url = textField(text=self.stitch_server_url, parent=self.stitch_remote_layout)
+
+        self.server_log_label = text(label='Server log', parent=self.debug_layout)
+        self.server_logger = textScrollList("grid_log", enable=False, allowMultiSelection=False, height=200, parent=self.debug_layout)
+
+        # Stitch button
+        self.stitch_btn = button(label="Stitch tiles", parent=self.debug_layout)
 
         # Add callbacks to buttons
-        self.export_btn.setCommand(self.exportPressed)
+        # self.export_btn.setCommand(self.exportPressed)
+        self.camera_refresh_button.setCommand(self.refresh_cameras)
         self.export_upload_btn.setCommand(self.exportAndUploadPressed)
         self.add_anim_shape_btn.setCommand(self.addAnimPressed)
         self.remove_anim_shape_btn.setCommand(self.removeAnimPressed)
         self.add_static_shape_btn.setCommand(self.addStaticPressed)
         self.remove_static_shape_btn.setCommand(self.removeStaticPressed)
-        self.manifest_path_browse_btn.setCommand(self.setManifestPathPressed)
-        self.tiles_path_browse_btn.setCommand(self.setTilePathPressed)
-        self.stitch_btn.setCommand(self.stitchPressed)
+        # self.manifest_path_browse_btn.setCommand(self.setManifestPathPressed)
+        # self.tiles_path_browse_btn.setCommand(self.setTilePathPressed)
+        self.stitch_btn.setCommand(self.stitch_remote)
 
         # Docking panel
         self.docker = dockControl(label="Uni-grid tools", manage=False, content=self.win, area="right")
@@ -193,10 +220,10 @@ class UnigridToolWindow(object):
 
         # Check login success
         if res.geturl() == unigrid_login_url:
-            print("Login failed")
+            self.server_log("Login failed")
             confirmDialog(title="Uni-grid", message="Uni-grid login rejected. Check your username and password.")
             return        
-        print("Login successful")
+        self.server_log("Login successful")
 
         # Get new job page
         br.open(unigrid_new_job_url)
@@ -213,34 +240,30 @@ class UnigridToolWindow(object):
 
         # Check job submission success
         job_id = None
-        print("Response URL: {}".format(res.geturl()))
-        print("Comparing {} to {}".format(res.geturl(), unigrid_jobs_url))
         if res.geturl() == unigrid_jobs_url:
             soup = BeautifulSoup(res.read())
             error_str = ""
             for error in soup.find('div', id="error_explanation").find_all('li'):
                 error_str += "- {}\n".format(error.string)
             errors = [error.string + "\n" ]
+            self.server_log("Server rejected the render job.\n\n{}".format(error_str))
             confirmDialog(title="Uni-grid error", message="Server rejected the render job.\n\n{}".format(error_str))
             return
         
         # Get new job ID from the returned URL
         job.job_id = res.geturl().split("/")[-1]
+        self.job_id_text.setText(job.job_id)
 
-        # Autofill tile and manifest paths
-        manifest_path = ""
-        job_tile_render_path = ""
-        if platform.system() == "Windows":
-            manifest_path = "\\\\uni-grid.mddn.vuw.ac.nz\\uni-grid\\projects\\{}".format(job.job_id)
-            job_tile_render_path = "\\\\uni-grid.mddn.vuw.ac.nz\\uni-grid\\renders\\{}\\{}".format(self.login_field.getText(), job.job_id)
-        elif platform.system() == "Darwin":
-            manifest_path = "/Volumes/uni-grid/projects/{}".format(job.job_id)
-            job_tile_render_path = "/Volumes/uni-grid/renders/{}/{}".format(self.login_field.getText(), job.job_id)
-        self.manifest_path.setText(os.path.join(manifest_path, 'manifest.json'))
-        self.tiles_path.setText(job_tile_render_path)
         confirmDialog(title="Uni-grid", message="Render submitted successfully.\n\nJob ID: {}".format(job.job_id))
 
+    def refresh_cameras(self, *args):
+        optionMenu(self.camera_list, edit=True, deleteAllItems=True)
+        self.camera_list.addItems([cam.name() for cam in ls(cameras=True) if cam.renderable.get()])
+
     # Callback functions
+    def toggle_debug_items(self, *args):
+        frameLayout(self.debug_frame, edit=True, visible=not frameLayout(self.debug_frame, query=True, visible=True))
+
     def exportPressed(self, *args):
         job = self.export()
         confirmDialog(title="Uni-grid", message="Manifest and zip located at\n{}".format(job.manifest_filepath))
@@ -262,7 +285,6 @@ class UnigridToolWindow(object):
         textScrollList(self.animated_shape_nodes, edit=True, enable=enabled, visible=enabled)
         button(self.add_anim_shape_btn, edit=True, enable=enabled, visible=enabled)
         button(self.remove_anim_shape_btn, edit=True, enable=enabled, visible=enabled)
-
 
     def addAnimPressed(self, *args):
         for node in listRelatives(ls(selection=True), shapes=True):
@@ -290,34 +312,34 @@ class UnigridToolWindow(object):
     def setTilePathPressed(self, *args):
         self.tiles_path.setText(promptForFolder())
 
-    def stitchPressed(self, *args):
-        local_stitch_script_path = os.path.join(os.path.dirname(__file__), "..", "..", "server", "stitch.py")
-        stitch_script_path = local_stitch_script_path
-        num_threads = 8
-        stitch_cmd = [str(flag) for flag in [stitch_script_path, self.manifest_path.getText(), self.tiles_path.getText(), workspace.getPath(), num_threads]]
-        if platform.system() == "Darwin":
-            # UUUUUUGH, hardcoded paths :(
-            stitch_cmd.insert(0, "/usr/local/bin/python")
-        elif platform.system() == "Windows":
-            stitch_cmd.insert(0, "python")
-        print(" ".join(stitch_cmd))
-        popenAndCall(stitch_cmd, self.stitch_complete)
-        confirmDialog(title="Uni-grid", message="Tile stitching in progress. This may take a while.\n\nStitched frames are located at {}/images".format(workspace.getPath()))
-        print("Done!")
+    def stitch_remote(self, *args):
+        self.server_log("Submitting stitch job to {}".format(self.stitch_url.getText()))
+        args = {
+            'user': self.login_field.getText().rstrip(),
+            'job_id': self.job_id_text.getText().rstrip()
+        }
+        stitch_command_url = "{}?{}".format(self.stitch_url.getText(), urllib.urlencode(args))
+        request = urllib2.Request(stitch_command_url)
+        response = urllib2.urlopen(request)
 
-    def stitch_complete(self):
-        confirmDialog(title="Uni-grid", message="Tile stitching complete.")
+        self.server_log("Stitch server respose code: {}".format(response.getcode()))
+
+    def stitch_complete(self, returnmessage):
+        confirmDialog(title="Uni-grid", message=returnmessage)
 
     def missing_assets_dialog(self, missing_asset_nodes):
         missing_assets_win = window(title="Uni-grid export error", width=500, height=220)
         missing_assets_win.show()
 
-        layout = columnLayout(adjustableColumn=True, height=200, rowSpacing=4, columnAlign="left", parent=missing_assets_win)
-        text(label='The following nodes have missing external dependencies. Check your paths!\nClick to select:', align="left", parent=layout)
-        missing_asset_list = textScrollList("missing_texture_list", height=200, parent=layout)
+        layout = columnLayout(adjustableColumn=True, height=200, rowSpacing=row_spacing, columnAlign="left", parent=missing_assets_win)
+        text(label='The following nodes have missing external dependencies. Check your paths!\nClick to select', align="left", parent=layout)
+        missing_asset_list = textScrollList("missing_texture_list", height=200, parent=layout) 
         textScrollList(missing_asset_list, edit=True, sc=partial(goto_missing_asset, missing_asset_list))
         for asset in missing_asset_nodes:
             missing_asset_list.append(asset.name())
+
+    def server_log(self, message):
+        self.server_logger.append(message)
 
 
 def goto_missing_asset(scrollList):
