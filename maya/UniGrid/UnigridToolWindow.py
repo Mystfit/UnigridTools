@@ -153,7 +153,7 @@ class UnigridToolWindow(object):
         self.remove_static_shape_btn.setCommand(self.removeStaticPressed)
         # self.manifest_path_browse_btn.setCommand(self.setManifestPathPressed)
         # self.tiles_path_browse_btn.setCommand(self.setTilePathPressed)
-        self.stitch_btn.setCommand(self.stitch_remote)
+        self.stitch_btn.setCommand(self.stitch_remote_pressed)
 
         # Docking panel
         self.docker = dockControl(label="Uni-grid tools", manage=False, content=self.win, area="right")
@@ -254,7 +254,17 @@ class UnigridToolWindow(object):
         job.job_id = res.geturl().split("/")[-1]
         self.job_id_text.setText(job.job_id)
 
+        self.stitch_remote(job.job_id)
+
         confirmDialog(title="Uni-grid", message="Render submitted successfully.\n\nJob ID: {}".format(job.job_id))
+
+    def stitch_remote(self, job_id):
+        self.server_log("Submitting stitch job to {}".format(self.stitch_url.getText()))
+        stitch_command_url = "{}?{}".format(self.stitch_url.getText(), urllib.urlencode({'job_id': job_id}))
+        request = urllib2.Request(stitch_command_url)
+        response = urllib2.urlopen(request)
+
+        self.server_log("Stitch server respose code: {}".format(response.getcode()))
 
     def refresh_cameras(self, *args):
         optionMenu(self.camera_list, edit=True, deleteAllItems=True)
@@ -312,17 +322,8 @@ class UnigridToolWindow(object):
     def setTilePathPressed(self, *args):
         self.tiles_path.setText(promptForFolder())
 
-    def stitch_remote(self, *args):
-        self.server_log("Submitting stitch job to {}".format(self.stitch_url.getText()))
-        args = {
-            'user': self.login_field.getText().rstrip(),
-            'job_id': self.job_id_text.getText().rstrip()
-        }
-        stitch_command_url = "{}?{}".format(self.stitch_url.getText(), urllib.urlencode(args))
-        request = urllib2.Request(stitch_command_url)
-        response = urllib2.urlopen(request)
-
-        self.server_log("Stitch server respose code: {}".format(response.getcode()))
+    def stitch_remote_pressed(self, *args):
+        self.stitch_remote(self.job_id_text.getText().rstrip())
 
     def stitch_complete(self, returnmessage):
         confirmDialog(title="Uni-grid", message=returnmessage)
