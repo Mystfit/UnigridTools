@@ -58,7 +58,7 @@ class Stitcher(object):
             try:
                 os.mkdir(os.path.dirname(frame_path))
             except FileExistsError:
-                print("Output folder already exists")
+                pass
             frame_buf.write(str(frame_path))
 
             try:

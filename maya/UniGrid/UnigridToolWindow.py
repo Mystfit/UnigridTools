@@ -2,7 +2,7 @@ from pymel.core import *
 from pymel import *
 import maya.utils
 
-import os, sys, ssl, platform, threading, subprocess, urllib2, urllib
+import os, sys, ssl, platform, threading, urllib2, urllib, time, json, httplib
 from functools import partial
 
 import mechanize
@@ -14,37 +14,24 @@ import AnimRenderJob
 from AnimRenderJob import AnimRenderJob
 from Singleton import Singleton
 
-def popenAndCall(popenArgs, onExit):
-    """
-    Runs the given args in a subprocess.Popen, and then calls the function
-    onExit when the subprocess completes.
-    onExit is a callable object, and popenArgs is a list/tuple of args that 
-    would give to subprocess.Popen.
-    """
-    def runInThread(popenArgs, onExit):
-        print("Running thread command {}".format(" ".join(popenArgs)))
-        result = 0
-        try:
-            result = subprocess.check_output(" ".join(popenArgs), shell=True, stderr=subprocess.PIPE)
-        except subprocess.CalledProcessError as e:
-            onExit("Process failed with status {} and output: {}".format(e.returncode, e.output))
-            return
+# Stitch constants
+STITCH_NOTFOUND = 0
+STITCH_RUNNING = 1
+STITCH_COMPLETE = 4
+STITCH_FAILED = 5
 
-        print("Thread complete")
-        maya.utils.executeInMainThreadWithResult(onExit, "Process complete. Result: {}".format(result))
-        # os.system(" ".join(popenArgs))
-        return
-
-    thread = threading.Thread(target=runInThread, args=(popenArgs, onExit))
-    thread.start()
-    return thread
+STITCH_POLL_TIME = 5.0
 
 
 @Singleton
 class UnigridToolWindow(object):
 
     def __init__(self):
-        self.stitch_server_url = "http://localhost:8000/stitch"
+        self.stitch_server_url = "http://localhost:8000"
+        self.pending_stitch_jobs = set()
+        self.stitch_watch_thread = threading.Thread(target=self.stitch_poller)
+        self.stitch_watch_thread.daemon = True
+        self.stitch_watch_thread.start()
         self.create_GUI()
 
     def create_GUI(self):
@@ -64,7 +51,7 @@ class UnigridToolWindow(object):
         self.exported_layout = columnLayout(adjustableColumn=True, rowSpacing=row_spacing, columnAlign="left", parent=self.exported_frame)
 
         # Tiles
-        self.tile_frame = frameLayout(collapsable=True, collapse=True, label="Tiles", marginHeight=2, marginWidth=2, parent=self.exported_layout)
+        self.tile_frame = frameLayout(collapsable=True, collapse=False, label="Tiles", marginHeight=2, marginWidth=2, parent=self.exported_layout)
         self.tile_layout = columnLayout(adjustableColumn=True, rowSpacing=row_spacing, columnAlign="left", parent=self.tile_frame)
         self.dyn_tiles_toggle = checkBox(label="Dynamic tiles", value=False, visible=False, parent=self.tile_layout)
         
@@ -125,7 +112,7 @@ class UnigridToolWindow(object):
         self.export_upload_btn = button(label="Render", parent=self.layout)
 
         # Debug frame
-        self.debug_frame = frameLayout(collapsable=True, collapse=True, visible=False, label="Debug", marginHeight=2, marginWidth=2, parent=self.layout)
+        self.debug_frame = frameLayout(collapsable=True, visible=False, label="Debug", marginHeight=2, marginWidth=2, parent=self.layout)
         self.debug_layout = columnLayout(adjustableColumn=True, rowSpacing=row_spacing, columnAlign="left", parent=self.debug_frame)
 
         self.job_id_layout = rowLayout(parent=self.debug_layout, numberOfColumns=3, columnAttach3=job_path_attachments, columnAlign3=job_path_attachments, adjustableColumn=2)
@@ -138,7 +125,7 @@ class UnigridToolWindow(object):
         self.stitch_url = textField(text=self.stitch_server_url, parent=self.stitch_remote_layout)
 
         self.server_log_label = text(label='Server log', parent=self.debug_layout)
-        self.server_logger = textScrollList("grid_log", enable=False, allowMultiSelection=False, height=200, parent=self.debug_layout)
+        self.server_logger = textScrollList("grid_log", enable=True, allowMultiSelection=False, height=200, parent=self.debug_layout)
 
         # Stitch button
         self.stitch_btn = button(label="Stitch tiles", parent=self.debug_layout)
@@ -214,16 +201,27 @@ class UnigridToolWindow(object):
         br.set_all_readonly(False)
 
         # Set login values
-        br.set_value(self.login_field.getText(), name="user[short_name]")
-        br.set_value(self.password, name="user[password]")
-        res = br.submit()
+        user = self.login_field.getText()
+        if user and self.password:
+            br.set_value(self.login_field.getText(), name="user[short_name]")
+            br.set_value(self.password, name="user[password]")
+            res = None
+            try:
+                res = br.submit()
+            except urllib2.HTTPError as e:
+                fail_msg = "Uni-grid login failed. Server response: {}".format(e)
+                confirmDialog(title="Uni-grid", message=fail_msg)
+                self.server_log(fail_msg)
+                return
 
-        # Check login success
-        if res.geturl() == unigrid_login_url:
-            self.server_log("Login failed")
-            confirmDialog(title="Uni-grid", message="Uni-grid login rejected. Check your username and password.")
-            return        
-        self.server_log("Login successful")
+            # Check login success
+            if res.geturl() == unigrid_login_url:
+                self.server_log("Login failed")
+                confirmDialog(title="Uni-grid", message="Uni-grid login rejected. Check your username and password.")
+                return        
+            self.server_log("Login successful")
+        else:
+            self.server_log("No login info provided. Rendering as guest")
 
         # Get new job page
         br.open(unigrid_new_job_url)
@@ -258,13 +256,46 @@ class UnigridToolWindow(object):
 
         confirmDialog(title="Uni-grid", message="Render submitted successfully.\n\nJob ID: {}".format(job.job_id))
 
+    def stitch_poller(self):
+        while True:
+            removed_stitch_jobs = set()
+            for job_id in self.pending_stitch_jobs:
+                status = self.get_stitch_status(job_id)
+                maya.utils.executeInMainThreadWithResult(self.server_log, "Job {} status: {}".format(job_id, status))
+                if status:
+                    if status['status'] == STITCH_COMPLETE:
+                        removed_stitch_jobs.add(job_id)
+                        maya.utils.executeInMainThreadWithResult(self.stitch_complete, "Stitch for job {} complete".format(job_id))
+                    elif status['status'] == STITCH_FAILED:
+                        removed_stitch_jobs.add(job_id)
+
+            for job_id in removed_stitch_jobs:
+                self.pending_stitch_jobs.remove(job_id)
+
+            time.sleep(STITCH_POLL_TIME)
+
     def stitch_remote(self, job_id):
         self.server_log("Submitting stitch job to {}".format(self.stitch_url.getText()))
-        stitch_command_url = "{}?{}".format(self.stitch_url.getText(), urllib.urlencode({'job_id': job_id}))
-        request = urllib2.Request(stitch_command_url)
+        
+        # POST request to the stitch server letting it know to watch for a completed Uni-grid job
+        args = urllib.urlencode({'job_id': job_id})
+        request = urllib2.Request("{}/stitch".format(self.stitch_url.getText()), args)
         response = urllib2.urlopen(request)
-
+        self.pending_stitch_jobs.add(job_id)
         self.server_log("Stitch server respose code: {}".format(response.getcode()))
+
+    def get_stitch_status(self, job_id):       
+        # GET request to the stitch server
+        stitch_url = "{}/stitch?{}".format(self.stitch_url.getText(), urllib.urlencode({'job_id': job_id}))
+        request = urllib2.Request(stitch_url)
+        
+        try:
+            response = urllib2.urlopen(request)
+        except urllib2.HTTPError as e:
+            # 404 means the job hasn't started stitching
+            if e.code == httplib.NOT_FOUND:
+                return None
+        return json.loads(response.read())
 
     def refresh_cameras(self, *args):
         optionMenu(self.camera_list, edit=True, deleteAllItems=True)

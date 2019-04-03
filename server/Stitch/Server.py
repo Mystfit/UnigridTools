@@ -1,6 +1,7 @@
 import http.server
 from http import HTTPStatus
 import urllib
+from pathlib import Path
 import urllib.parse as urlparse
 from urllib import request
 import sys, os, multiprocessing, threading, json, time, ssl
@@ -25,18 +26,54 @@ UNIGRID_POLL_TIME = 5
 JOB_COMPLETE = 4
 JOB_FAILED = 5
 
+STITCH_RUNNING = 1
+STITCH_COMPLETE = 4
+STITCH_FAILED = 5
+
 ssl._create_default_https_context = ssl._create_unverified_context
+
+
+class StitchJob(object):
+    def __init__(self, job_id, user, shared_resource_path):
+        self.job_id = job_id
+        self.user = user
+        self.status = STITCH_RUNNING
+        self.frames = []
+
+        base_project = os.path.join(shared_resource_path, "projects", job_id)
+        self.project_path = os.path.join(base_project, os.listdir(base_project)[0])
+        self.image_path = os.path.join(shared_resource_path, "renders", user, job_id)
+        with open(os.path.join(self.project_path, "manifest.json"), 'r') as f:
+            self.manifest = json.loads(f.read())
+
+    def fail(self):
+        self.status = STITCH_FAILED
+
+    def complete(self):
+        for file in self.manifest['frames']:
+            path = Path(os.path.join(self.image_path, file['outfile']))
+            self.frames.append(str(path))
+
+        print("Stitch job {} completed".format(self.job_id))
+        self.status = STITCH_COMPLETE
+
+    def toJSON(self):
+        data = {
+            'job_id': self.job_id, 
+            'user': self.user,
+            'status': self.status,
+            'frames': self.frames
+        }
+        return json.dumps(data)
 
 
 class StitchServer(HTTPServer):
     def __init__(self, shared_resource_path, *args, **kwargs):
         HTTPServer.__init__(self, *args, **kwargs)
-        self.RequestHandlerClass.shared_resource_path = shared_resource_path
 
-class StitchRequestHandler(http.server.SimpleHTTPRequestHandler):
-    def __init__(self, *args):
         self.stitch_queue = queue.Queue()
         self.watchlist = set()
+        self.jobs = {}
 
         # Start stitcher
         num_threads = max(multiprocessing.cpu_count() - 1, 1)
@@ -47,24 +84,21 @@ class StitchRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.stitch_command_thread = threading.Thread(target=self.process_stitch_commands, daemon=True)
         self.stitch_command_thread.start()
 
-        self.watch_job_thread = threading.Thread(target=self.watch_jobs, daemon=True)
+        self.watch_job_thread = threading.Thread(target=self.poll_jobs, daemon=True)
         self.watch_job_thread.start()
 
-        http.server.SimpleHTTPRequestHandler.__init__(self, *args)
+        self.shared_resource_path = shared_resource_path
 
     def stop_stitcher(self):
         self.running = False
 
     def process_stitch_commands(self):
         while self.running:
-            stitch_args = self.stitch_queue.get(True)
-            base_project_path = os.path.join(self.shared_resource_path, "projects", stitch_args['job_id'])
-            manifest_path = os.path.join(base_project_path, os.listdir(base_project_path)[0], "manifest.json")
-            images_path = os.path.join(self.shared_resource_path, "renders", stitch_args['user'], stitch_args['job_id'])
-            self.stitcher.stitch(manifest_path, images_path, images_path)
-            print("Stitch for job {} completed".format(stitch_args['job_id']))
+            stitch_job = self.stitch_queue.get(True)
+            self.stitcher.stitch(os.path.join(stitch_job.project_path, "manifest.json"), stitch_job.image_path, stitch_job.image_path)
+            stitch_job.complete()
 
-    def watch_jobs(self):
+    def poll_jobs(self):
         while self.running:
             removed_jobs = set()
             for job_id in self.watchlist:
@@ -75,39 +109,20 @@ class StitchRequestHandler(http.server.SimpleHTTPRequestHandler):
 
                 # Query completed and failed jobs to see if we can perform a stitch
                 if job_args['status'] == JOB_COMPLETE:
-                    print("Watched job {} completed. Queueing stitch".format(job_id))
-                    self.stitch_queue.put({'job_id':job_id, 'user': job_args['short_name']})
+                    print("Job {} finished rendering. Queueing stitch".format(job_id))
+                    job = StitchJob(job_id, job_args['short_name'], self.shared_resource_path)
+                    self.jobs[job_id] = job
+                    self.stitch_queue.put(job)
                     removed_jobs.add(job_id)
                 elif job_args['status'] == JOB_FAILED:
-                    print("Watched job {} failed. Removing".format(job_id))
+                    print("Job {} failed. Removing".format(job_id))
                     removed_jobs.add(job_id)
 
             # Prune jobs after we finish iterating over the set
             for job_id in removed_jobs:
                 self.remove_watched_job(job_id)
 
-
             time.sleep(UNIGRID_POLL_TIME)
-
-    def do_GET(self):
-        print("Received path: {}".format(self.path))
-        parsed = urlparse.urlparse(self.path)
-        query = urlparse.parse_qs(parsed.query)
-
-        if not 'job_id' in query:
-            self.send_response(HTTPStatus.BAD_REQUEST)
-            self.end_headers()
-            return
-
-        stripped_query = {}
-        for key, val in query.items():
-            stripped_query[key] = val[0]
-
-        print("Received query args: {}".format(stripped_query))
-        self.watch_job(stripped_query['job_id'])
-
-        self.send_response(HTTPStatus.OK)
-        self.end_headers()
 
     def watch_job(self, job_id):
         if not job_id in self.watchlist:
@@ -132,6 +147,72 @@ class StitchRequestHandler(http.server.SimpleHTTPRequestHandler):
                 print("Job not found")
                 return None
         return response
+
+
+class StitchRequestHandler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, request, client_address, server):
+        self.server = server
+        http.server.SimpleHTTPRequestHandler.__init__(self,  request, client_address, server)
+
+    def do_POST(self):
+        parsed = urlparse.urlparse(self.path)
+        content_length = int(self.headers['Content-Length'])
+        body = self.rfile.read(content_length)
+        query = urlparse.parse_qs(body)
+        reply = (HTTPStatus.NOT_IMPLEMENTED,)
+
+        if parsed.path.startswith("/stitch"):
+            reply = self.handle_stitch_post(self.strip_args(query))
+        else:
+            reply = (HTTPStatus.NOT_FOUND)
+
+        self.send_response(reply[0])
+        self.end_headers()
+
+        if len(reply) > 1:
+            self.wfile.write(reply[1])
+
+    def do_GET(self):
+        parsed = urlparse.urlparse(self.path)
+        query = urlparse.parse_qs(parsed.query)
+        reply = (HTTPStatus.NOT_IMPLEMENTED,)
+
+        if parsed.path.startswith("/stitch"):
+            reply = self.handle_stitch_get(self.strip_args(query))
+        else:
+            reply = (HTTPStatus.NOT_FOUND,)
+
+        self.send_response(reply[0])
+        self.send_header('Content-type', 'application/json')    
+        self.end_headers()
+        if len(reply) > 1:
+            self.wfile.write(reply[1])
+
+    def strip_args(self, args):
+        stripped_args = {}
+        for key, val in args.items():
+            if isinstance(key, bytes):
+                stripped_args[key.decode("utf-8")] = val[0].decode("utf-8") 
+            else:
+                stripped_args[key] = val[0]
+
+        return stripped_args
+
+    def handle_stitch_post(self, args):
+        if not 'job_id' in args:
+            return (HTTPStatus.BAD_REQUEST,)
+
+        self.server.watch_job(args['job_id'])
+        return (HTTPStatus.OK,)
+
+    def handle_stitch_get(self, args):
+        if 'job_id' in args:
+            pass
+
+        if args['job_id'] in self.server.jobs:
+            return (HTTPStatus.OK, str.encode(self.server.jobs[args['job_id']].toJSON()))        
+
+        return (HTTPStatus.NOT_FOUND,)
 
 
 def start_server():
