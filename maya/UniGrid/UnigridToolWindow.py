@@ -2,7 +2,7 @@ from pymel.core import *
 from pymel import *
 import maya.utils
 
-import os, sys, ssl, platform, threading, urllib2, urllib, time, json, httplib
+import os, sys, ssl, platform, threading, urllib2, urllib, time, json, httplib, subprocess
 from functools import partial
 
 import mechanize
@@ -13,26 +13,39 @@ from RenderJob import RenderJobException, MissingAssetException
 import AnimRenderJob
 from AnimRenderJob import AnimRenderJob
 from Singleton import Singleton
+import Utils
 
-# Stitch constants
-STITCH_NOTFOUND = 0
-STITCH_RUNNING = 1
-STITCH_COMPLETE = 4
-STITCH_FAILED = 5
 
 STITCH_POLL_TIME = 5.0
-
 
 @Singleton
 class UnigridToolWindow(object):
 
     def __init__(self):
-        self.stitch_server_url = "http://localhost:8000"
+        ssl._create_default_https_context = ssl._create_unverified_context
+
+        self.stitch_server_url = Utils.STITCH_URL
         self.pending_stitch_jobs = set()
+        
+        self.ran_jobs = []
+
+        # Set up mechanize
+        self.active_login = None
+        self.br = mechanize.Browser()
+        self.br.set_handle_robots(False) # ignore robots
+        self.br.set_handle_refresh(False)
+
+        # Create GUI
+        self.create_GUI()
+
+        # Start threads
+        self.poll_running = True
         self.stitch_watch_thread = threading.Thread(target=self.stitch_poller)
         self.stitch_watch_thread.daemon = True
         self.stitch_watch_thread.start()
-        self.create_GUI()
+
+        # Load jobs from disk
+        self.load_saved_jobs(os.path.basename(system.sceneName()))
 
     def create_GUI(self):
         # Window
@@ -108,6 +121,25 @@ class UnigridToolWindow(object):
         self.email_label = text(label='Email', align='center', parent=self.login_layout)
         self.email_field = textField(text="", width=100, parent=self.login_layout)
 
+        # Existing jobs
+        self.job_frame = frameLayout(collapsable=True, collapse=False, label="Scene jobs", marginHeight=2, marginWidth=2, parent=self.server_layout)
+        self.job_layout = columnLayout(adjustableColumn=True, rowSpacing=row_spacing, columnAlign="left", parent=self.job_frame)
+        self.jobs_refresh = button(label='Refresh', parent=self.job_layout)
+        self.jobs_refresh.setCommand(self.refresh_pressed)
+        self.job_scroll_layout = scrollLayout(childResizable=True, verticalScrollBarThickness=16, height=300, parent=self.job_layout)
+        self.job_details_col_layout = columnLayout(adjustableColumn=True, rowSpacing=row_spacing, columnAlign="left", parent=self.job_scroll_layout)
+        self.job_detail_rows = []
+
+        job_header_align = ["left" for i in range(4)]
+        self.job_details_col_spacing = [50, 70, 100, 80]
+        self.job_details_row_header_layout = rowLayout(parent=self.job_details_col_layout, numberOfColumns=4, columnAttach4=job_header_align, columnAlign4=job_header_align)
+        job_detail_id_text = text(label='Job ID', font='boldLabelFont', align='left', width=self.job_details_col_spacing[0], parent=self.job_details_row_header_layout)
+        job_detail_user_text = text(label='User', font='boldLabelFont', align='left', width=self.job_details_col_spacing[1], parent=self.job_details_row_header_layout)
+        job_detail_status_text = text(label='Status', font='boldLabelFont', align='left', width=self.job_details_col_spacing[2], parent=self.job_details_row_header_layout)
+        job_detail_command_text = text(label='Commands', font='boldLabelFont', align='left', width=self.job_details_col_spacing[3], parent=self.job_details_row_header_layout)
+        
+        separator(height=20, parent=self.layout)
+
         # Upload button
         self.export_upload_btn = button(label="Render", parent=self.layout)
 
@@ -131,20 +163,17 @@ class UnigridToolWindow(object):
         self.stitch_btn = button(label="Stitch tiles", parent=self.debug_layout)
 
         # Add callbacks to buttons
-        # self.export_btn.setCommand(self.exportPressed)
         self.camera_refresh_button.setCommand(self.refresh_cameras)
         self.export_upload_btn.setCommand(self.exportAndUploadPressed)
         self.add_anim_shape_btn.setCommand(self.addAnimPressed)
         self.remove_anim_shape_btn.setCommand(self.removeAnimPressed)
         self.add_static_shape_btn.setCommand(self.addStaticPressed)
         self.remove_static_shape_btn.setCommand(self.removeStaticPressed)
-        # self.manifest_path_browse_btn.setCommand(self.setManifestPathPressed)
-        # self.tiles_path_browse_btn.setCommand(self.setTilePathPressed)
         self.stitch_btn.setCommand(self.stitch_remote_pressed)
 
         # Docking panel
         self.docker = dockControl(label="Uni-grid tools", manage=False, content=self.win, area="right")
-
+        
     def show_GUI(self):
         dockControl(self.docker, edit=True, manage=True)
 
@@ -154,6 +183,148 @@ class UnigridToolWindow(object):
     def hidePassword(self, *args):
         self.password = self.password_field.getText()
         self.password_field.setText("*" * len(self.password_field.getText()))
+
+    def unigrid_data_dir(self):
+        return os.path.normpath(os.path.join(workspace.getPath(), 'data', 'unigrid'))
+
+    def clear_jobs_list(self):
+        children = columnLayout(self.job_details_col_layout, query=True, childArray=True)
+        for row in range(1, len(children)):
+            deleteUI(row, control=True)
+
+    def add_job_detail_row(self, job_id, user):
+        job_detail_align = ["left" for i in range(5)]
+        row = rowLayout(parent=self.job_details_col_layout, numberOfColumns=5, columnAttach5=job_detail_align, columnAlign5=job_detail_align),
+        text(label=job_id, font='plainLabelFont', align='left', width=self.job_details_col_spacing[0])
+        text(label=user, font='plainLabelFont', align='left', width=self.job_details_col_spacing[1])
+        text(label='status', font='plainLabelFont', align='left', width=self.job_details_col_spacing[2])
+        button(label='Open images folder', command=partial(Utils.open_images_folder, job_id, user))
+        button(label='Delete job', command=partial(self.delete_job, job_id))
+        return rowLayout(row, query=True, childArray=True)
+
+    def update_job_detail_row(self, row, job_id, user, status):
+        text(row[0], edit=True, label=job_id)
+        text(row[1], edit=True, label=user)
+        text(row[2], edit=True, label=Utils.get_status_name(status))
+
+    def get_job_row(self, job_id):
+        col_children = columnLayout(self.job_details_col_layout, query=True, childArray=True)
+        for col_i in range(1, len(col_children)):
+            row = col_children[col_i]
+            row_children = rowLayout(col_children[col_i], query=True, childArray=True)
+            row_job_id = text(row_children[0], query=True, label=True)
+            if str(row_job_id) == str(job_id):
+                return row
+        return None
+
+    def remove_job_detail_row(self, job_id):
+        try:
+            self.ran_jobs.remove(job_id)
+        except ValueError:
+            pass
+        maya.utils.executeInMainThreadWithResult(self.delete_row, self.get_job_row(job_id))
+
+    def lock_job_detail_row(self, job_id):
+        row = self.get_job_row(job_id)
+        rowLayout(row, edit=True, enable=False)
+
+    def unlock_job_detail_row(self, job_id):
+        row = self.get_job_row(job_id)
+        rowLayout(row, edit=True, enable=True)
+
+    def delete_row(self, row):
+        deleteUI(row, control=True)
+
+    def store_job(self, job_id, scene_name):
+        self.ran_jobs.append(job_id)
+        job = Utils.query_job(job_id)
+        self.update_job_detail_row(self.add_job_detail_row(job['id'], job['short_name']), job['id'], job['short_name'], Utils.get_stitch_status(job))
+        self.save_jobs(scene_name)
+
+    def delete_job(self, job_id, *args):
+        # Freeze UI controls
+        self.lock_job_detail_row(job_id)
+
+        # Login
+        self.login(self.login_field.getText(), self.password)
+        
+        # Login page sends us to job page by default
+        response_data = self.br.response().read()
+        soup = BeautifulSoup(response_data, features="html5lib")
+
+        # Get CSRF token
+        auth_token_tag = soup.find('meta', attrs={"name": "csrf-token"})
+        auth_token = auth_token_tag['content']
+        args = urllib.urlencode({
+            '_method': 'delete',
+            'authenticity_token': auth_token
+        })
+
+        # Delete job
+        try:
+            delete_response = self.br.open("{}/{}".format(Utils.UNIGRID_JOBS_URL, job_id), args)
+            delete_response_data = delete_response.read()
+            soup = BeautifulSoup(delete_response_data, features="html5lib")
+            notice = soup.find('p', id='notice').string
+            self.server_log("Delete request - Server responded: {}".format(notice))
+        except urllib2.HTTPError as e:
+            if e.code == httplib.NOT_FOUND:
+                pass
+
+        # Remove job items
+        self.remove_job_detail_row(job_id)
+
+
+    def load_saved_jobs(self, scene_name):
+        file = None
+        try:
+            with open(os.path.join(self.unigrid_data_dir(), '{}.json'.format(scene_name)), 'r') as f:
+                data = f.read()
+                if data:
+                    self.ran_jobs = json.loads(data)
+        except IOError:
+            pass
+
+        self.clear_jobs_list()
+        pruned_jobs = []
+        for job_id in self.ran_jobs:
+            job = Utils.query_job(job_id)
+            if not job:
+                pruned_jobs.append(job_id)
+                continue
+            self.update_job_detail_row(self.add_job_detail_row(job['id'], job['short_name']), job['id'], job['short_name'], Utils.get_stitch_status(job))
+        for job_id in pruned_jobs:
+            try:
+                self.ran_jobs.remove(job_id)
+            except RuntimeError:
+                pass
+
+        # Remove missing jobs from disk
+        self.save_jobs(scene_name)
+
+    def save_jobs(self, scene_name):
+        with open(os.path.join(self.unigrid_data_dir(), scene_name) + ".json", 'w+') as f:
+            f.write(json.dumps(self.ran_jobs))
+
+    def update_jobs(self):
+        col_children = columnLayout(self.job_details_col_layout, query=True, childArray=True)
+
+        # Iterate over rows, skip header
+        for col_i in range(1, len(col_children)):
+            row = rowLayout(col_children[col_i], query=True, childArray=True)
+            if not row:
+                continue
+            row_job_id = text(row[0], query=True, label=True)
+            row_job_user = text(row[1], query=True, label=True)
+            row_job_status = Utils.get_status_from_name(text(row[2], query=True, label=True))
+            if row_job_id in self.ran_jobs and Utils.is_job_pollable(row_job_status):
+                # Query job status from Unigrid
+                job = Utils.query_job(row_job_id)
+                if not job:
+                    self.remove_job_detail_row(row_job_id)
+                    continue
+
+                self.update_job_detail_row(row, row_job_id, job['short_name'], Utils.get_stitch_status(job))
 
     def export(self):
         print("Exporting...")
@@ -183,31 +354,20 @@ class UnigridToolWindow(object):
 
         return None
 
-    def upload(self, job):
-        # URLs
-        unigrid_url = 'https://uni-grid.mddn.vuw.ac.nz'
-        unigrid_login_url = unigrid_url + "/login"
-        unigrid_jobs_url = unigrid_url + "/jobs"
-        unigrid_new_job_url = unigrid_jobs_url + "/new"
-
-        # Set up mechanize
-        ssl._create_default_https_context = ssl._create_unverified_context
-        br = mechanize.Browser()
-        br.set_handle_robots(False) # ignore robots
-
+    def login(self, user, passw):
         # Get login page
-        br.open(unigrid_login_url)
-        form = br.select_form(nr=0)
-        br.set_all_readonly(False)
+        self.br.open(Utils.UNIGRID_LOGIN_URL)
+        form = self.br.select_form(nr=0)
+        self.br.set_all_readonly(False)
 
         # Set login values
         user = self.login_field.getText()
-        if user and self.password:
-            br.set_value(self.login_field.getText(), name="user[short_name]")
-            br.set_value(self.password, name="user[password]")
+        if user and passw:
+            self.br.set_value(user, name="user[short_name]")
+            self.br.set_value(passw, name="user[password]")
             res = None
             try:
-                res = br.submit()
+                res = self.br.submit()
             except urllib2.HTTPError as e:
                 fail_msg = "Uni-grid login failed. Server response: {}".format(e)
                 confirmDialog(title="Uni-grid", message=fail_msg)
@@ -215,7 +375,7 @@ class UnigridToolWindow(object):
                 return
 
             # Check login success
-            if res.geturl() == unigrid_login_url:
+            if res.geturl() == Utils.UNIGRID_LOGIN_URL:
                 self.server_log("Login failed")
                 confirmDialog(title="Uni-grid", message="Uni-grid login rejected. Check your username and password.")
                 return        
@@ -223,22 +383,29 @@ class UnigridToolWindow(object):
         else:
             self.server_log("No login info provided. Rendering as guest")
 
+        self.active_login = user
+
+    def upload(self, job):
+        # Login
+        self.login(self.login_field.getText(), self.password)
+
         # Get new job page
-        br.open(unigrid_new_job_url)
-        br.select_form(id="new_job")
-        br["job[job_type]"] = ["Arnold"]
+        self.br.open(Utils.UNIGRID_NEW_JOB_URL)
+        self.br.select_form(id="new_job")
+        self.br["job[job_type]"] = ["Arnold"]
 
         # Set job variables
-        br.set_value(self.email_field.getText(), name="job[email]")
-        br.set_value(os.path.basename(system.sceneName()), name="job[scene]")
-        br.set_value(str(self.start_frame.getValue()), name="job[start_frame]")
-        br.set_value(str(self.cols.getValue() * self.rows.getValue() * ((self.end_frame.getValue() - self.start_frame.getValue() + 1))), name="job[end_frame]")
-        br.form.add_file(open(job.zip_path, 'rb'), 'application/zip', job.zip_path, name="job[project_zip]")
-        res = br.submit()
+        scene_name = os.path.basename(system.sceneName())
+        self.br.set_value(self.email_field.getText(), name="job[email]")
+        self.br.set_value(scene_name, name="job[scene]")
+        self.br.set_value(str(self.start_frame.getValue()), name="job[start_frame]")
+        self.br.set_value(str(self.cols.getValue() * self.rows.getValue() * ((self.end_frame.getValue() - self.start_frame.getValue() + 1))), name="job[end_frame]")
+        self.br.form.add_file(open(job.zip_path, 'rb'), 'application/zip', job.zip_path, name="job[project_zip]")
+        res = self.br.submit()
 
         # Check job submission success
         job_id = None
-        if res.geturl() == unigrid_jobs_url:
+        if res.geturl() == Utils.UNIGRID_JOBS_URL:
             soup = BeautifulSoup(res.read())
             error_str = ""
             for error in soup.find('div', id="error_explanation").find_all('li'):
@@ -252,27 +419,38 @@ class UnigridToolWindow(object):
         job.job_id = res.geturl().split("/")[-1]
         self.job_id_text.setText(job.job_id)
 
+        # Store job locally
+        self.store_job(job.job_id, scene_name)
+
+        # Let stitcher know new job has been queued
         self.stitch_remote(job.job_id)
 
-        confirmDialog(title="Uni-grid", message="Render submitted successfully.\n\nJob ID: {}".format(job.job_id))
+        # confirmDialog(title="Uni-grid", message="Render submitted successfully.\n\nJob ID: {}".format(job.job_id))
+
+    def stop(self):
+        self.poll_running = False
 
     def stitch_poller(self):
-        while True:
-            removed_stitch_jobs = set()
-            for job_id in self.pending_stitch_jobs:
-                status = self.get_stitch_status(job_id)
+        while self.poll_running:
+            removed_stitch_jobs = []
+            stitch_jobs = self.pending_stitch_jobs.copy()
+            for job_id in stitch_jobs:
+                status = Utils.query_stitch_job(job_id, self.stitch_url.getText())
                 maya.utils.executeInMainThreadWithResult(self.server_log, "Job {} status: {}".format(job_id, status))
                 if status:
-                    if status['status'] == STITCH_COMPLETE:
-                        removed_stitch_jobs.add(job_id)
-                        maya.utils.executeInMainThreadWithResult(self.stitch_complete, "Stitch for job {} complete".format(job_id))
-                    elif status['status'] == STITCH_FAILED:
-                        removed_stitch_jobs.add(job_id)
+                    if status['status'] == Utils.STITCH_COMPLETE:
+                        removed_stitch_jobs.append(job_id)
+                        # maya.utils.executeInMainThreadWithResult(self.stitch_complete, "Stitch for job {} complete".format(job_id))
+                    elif status['status'] == Utils.STITCH_FAILED:
+                        removed_stitch_jobs.append(job_id)
 
             for job_id in removed_stitch_jobs:
                 self.pending_stitch_jobs.remove(job_id)
 
+            self.update_jobs()
+
             time.sleep(STITCH_POLL_TIME)
+        print("Exiting poller")
 
     def stitch_remote(self, job_id):
         self.server_log("Submitting stitch job to {}".format(self.stitch_url.getText()))
@@ -284,19 +462,6 @@ class UnigridToolWindow(object):
         self.pending_stitch_jobs.add(job_id)
         self.server_log("Stitch server respose code: {}".format(response.getcode()))
 
-    def get_stitch_status(self, job_id):       
-        # GET request to the stitch server
-        stitch_url = "{}/stitch?{}".format(self.stitch_url.getText(), urllib.urlencode({'job_id': job_id}))
-        request = urllib2.Request(stitch_url)
-        
-        try:
-            response = urllib2.urlopen(request)
-        except urllib2.HTTPError as e:
-            # 404 means the job hasn't started stitching
-            if e.code == httplib.NOT_FOUND:
-                return None
-        return json.loads(response.read())
-
     def refresh_cameras(self, *args):
         optionMenu(self.camera_list, edit=True, deleteAllItems=True)
         self.camera_list.addItems([cam.name() for cam in ls(cameras=True) if cam.renderable.get()])
@@ -304,6 +469,9 @@ class UnigridToolWindow(object):
     # Callback functions
     def toggle_debug_items(self, *args):
         frameLayout(self.debug_frame, edit=True, visible=not frameLayout(self.debug_frame, query=True, visible=True))
+
+    def refresh_pressed(self, *args):
+        self.update_jobs()
 
     def exportPressed(self, *args):
         job = self.export()
@@ -329,12 +497,16 @@ class UnigridToolWindow(object):
 
     def addAnimPressed(self, *args):
         for node in listRelatives(ls(selection=True), shapes=True):
+            if not node:
+                continue
             static_and_animated_items = textScrollList(self.animated_shape_nodes, query=True, allItems=True) + textScrollList(self.static_shape_nodes, query=True, allItems=True)
             if node.name() not in static_and_animated_items:
                 self.animated_shape_nodes.append(node.name())
 
     def addStaticPressed(self, *args):
         for node in listRelatives(ls(selection=True), shapes=True):
+            if not node:
+                continue
             static_and_animated_items = textScrollList(self.animated_shape_nodes, query=True, allItems=True) + textScrollList(self.static_shape_nodes, query=True, allItems=True)
             if node.name() not in static_and_animated_items:
                 self.static_shape_nodes.append(node.name())
@@ -380,4 +552,3 @@ def goto_missing_asset(scrollList):
         print("Missing asset node: {}".format(node[0]))
         select(node[0])
     return ""
-

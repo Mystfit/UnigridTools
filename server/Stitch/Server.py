@@ -26,9 +26,10 @@ UNIGRID_POLL_TIME = 5
 JOB_COMPLETE = 4
 JOB_FAILED = 5
 
-STITCH_RUNNING = 1
-STITCH_COMPLETE = 4
-STITCH_FAILED = 5
+STITCH_NOTFOUND = 6
+STITCH_RUNNING = 7
+STITCH_COMPLETE = 8
+STITCH_FAILED = 9
 
 ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -104,8 +105,10 @@ class StitchServer(HTTPServer):
             for job_id in self.watchlist:
                 job_args = self.query_job(job_id)
                 if not job_args:
-                    self.remove_watched_job(job_id)
+                    removed_jobs.add(job_id)
                     continue
+
+                print("Watching job {}".format(job_id))
 
                 # Query completed and failed jobs to see if we can perform a stitch
                 if job_args['status'] == JOB_COMPLETE:

@@ -60,6 +60,7 @@ def uninitializePlugin(plugin):
         raise
 
     destroy_menu()
+    UnigridToolWindow.UnigridToolWindow.instance().stop()
 
 def create_menu():
     destroy_menu()
