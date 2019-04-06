@@ -157,12 +157,17 @@ class StitchServer(HTTPServer):
         job_query_url = "{}/jobs/{}.json".format(UNIGRID_URL, job_id)
         print("Querying job: {}".format(job_id))
         req = request.Request(job_query_url)
-        response = json.loads(request.urlopen(req).read())
-        if 'status' in response:
-            if response['status'] == "404":
+        try:
+            response = request.urlopen(req)
+        except urllib.error.HTTPError:
+            return None
+        
+        response_data = json.loads(response.read())
+        if 'status' in response_data:
+            if response_data['status'] == "404":
                 print("Job not found")
                 return None
-        return response
+        return response_data
 
 
 class StitchRequestHandler(http.server.SimpleHTTPRequestHandler):
@@ -223,10 +228,8 @@ class StitchRequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def handle_stitch_get(self, args):
         if 'job_id' in args:
-            pass
-
-        if args['job_id'] in self.server.jobs:
-            return (HTTPStatus.OK, str.encode(self.server.jobs[args['job_id']].toJSON()))
+            if args['job_id'] in self.server.jobs:
+                return (HTTPStatus.OK, str.encode(self.server.jobs[args['job_id']].toJSON()))
 
         return (HTTPStatus.OK, str.encode(json.dumps(self.server.jobs, cls=StitchJobEncoder)))
 
