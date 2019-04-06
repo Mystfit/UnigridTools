@@ -69,7 +69,7 @@ class StitchJob(object):
         return json.dumps(data)
 
 
-class StitchEncoder(JSONEncoder):
+class StitchJobEncoder(JSONEncoder):
     def default(self, o):
         if isinstance(o, StitchJob):
             return {
@@ -160,8 +160,9 @@ class StitchServer(HTTPServer):
         try:
             response = request.urlopen(req)
         except urllib.error.HTTPError:
+            
             return None
-        
+
         response_data = json.loads(response.read())
         if 'status' in response_data:
             if response_data['status'] == "404":
