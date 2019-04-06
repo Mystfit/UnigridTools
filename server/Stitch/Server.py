@@ -1,3 +1,5 @@
+# singularity run stitchserver.sif -B /home/render/unigrid:/mnt/uni-grid --net --network-args "portmap=8080:8000/tcp"
+
 import http.server
 from http import HTTPStatus
 import urllib
@@ -160,7 +162,7 @@ class StitchServer(HTTPServer):
         try:
             response = request.urlopen(req)
         except urllib.error.HTTPError:
-            
+
             return None
 
         response_data = json.loads(response.read())
