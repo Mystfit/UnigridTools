@@ -38,29 +38,29 @@ class Stitcher(object):
             print("Assembling frame {}".format(frame_path))
 
             first_tile_path = os.path.join(tiles_path, frame["tiles"][0]["outfile"])
-            if not os.path.isfile(first_tile_path):
-                continue
+            if os.path.isfile(first_tile_path):
+                first_tile = oiio.ImageBuf(str(first_tile_path))
+                spec = first_tile.spec()
+                frame_buf = oiio.ImageBuf(oiio.ImageSpec(frame["res_x"], frame["res_y"], spec.nchannels, spec.format))
 
-            first_tile = oiio.ImageBuf(str(first_tile_path))
-            spec = first_tile.spec()
-            frame_buf = oiio.ImageBuf(oiio.ImageSpec(frame["res_x"], frame["res_y"], spec.nchannels, spec.format))
+                for tile in frame["tiles"]:
+                    tile_path = os.path.join(tiles_path, tile["outfile"])
+                    if not os.path.isfile(tile_path):
+                        continue
+                    tile_buf = oiio.ImageBuf(str(tile_path))
 
-            for tile in frame["tiles"]:
-                tile_path = os.path.join(tiles_path, tile["outfile"])
-                if not os.path.isfile(tile_path):
-                    continue
-                tile_buf = oiio.ImageBuf(str(tile_path))
+                    oiio.ImageBufAlgo.paste(frame_buf, tile["coords"][0], tile["coords"][1], 0, 0, tile_buf)
+                
+                print("Writing {}".format(frame_path))
 
-                oiio.ImageBufAlgo.paste(frame_buf, tile["coords"][0], tile["coords"][1], 0, 0, tile_buf)
+                try:
+                    os.mkdir(os.path.dirname(frame_path))
+                except FileExistsError:
+                    pass
+                frame_buf.write(str(frame_path))
+            else:
+                print("Could not find first tile. Aborting frame stitch")
             
-            print("Writing {}".format(frame_path))
-
-            try:
-                os.mkdir(os.path.dirname(frame_path))
-            except FileExistsError:
-                pass
-            frame_buf.write(str(frame_path))
-
             try:
                 stitch_args = self.stitch_queue.get_nowait()
             except queue.Empty:

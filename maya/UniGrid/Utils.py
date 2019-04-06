@@ -5,7 +5,7 @@ UNIGRID_URL = "https://uni-grid.mddn.vuw.ac.nz"
 UNIGRID_LOGIN_URL = UNIGRID_URL + "/login"
 UNIGRID_JOBS_URL = UNIGRID_URL + "/jobs"
 UNIGRID_NEW_JOB_URL = UNIGRID_JOBS_URL + "/new"
-STITCH_URL = "http://localhost:8000"
+STITCH_URL = "http://grid-dev.mddn.vuw.ac.nz:8000"
 
 # Stitch constants
 JOB_UNKNOWN = -1

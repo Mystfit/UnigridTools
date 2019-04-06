@@ -5,6 +5,7 @@ from pathlib import Path
 import urllib.parse as urlparse
 from urllib import request
 import sys, os, multiprocessing, threading, json, time, ssl
+from json import JSONEncoder
 
 try:
     from http.server import HTTPServer
@@ -66,6 +67,18 @@ class StitchJob(object):
             'frames': self.frames
         }
         return json.dumps(data)
+
+
+class StitchEncoder(JSONEncoder):
+    def default(self, o):
+        if isinstance(o, StitchJob):
+            return {
+                'job_id': o.job_id, 
+                'user': o.user,
+                'status': o.status,
+                'frames': o.frames
+            }
+        return super().default(self, o)
 
 
 class StitchServer(HTTPServer):
@@ -213,9 +226,9 @@ class StitchRequestHandler(http.server.SimpleHTTPRequestHandler):
             pass
 
         if args['job_id'] in self.server.jobs:
-            return (HTTPStatus.OK, str.encode(self.server.jobs[args['job_id']].toJSON()))        
+            return (HTTPStatus.OK, str.encode(self.server.jobs[args['job_id']].toJSON()))
 
-        return (HTTPStatus.NOT_FOUND,)
+        return (HTTPStatus.OK, str.encode(json.dumps(self.server.jobs, cls=StitchJobEncoder)))
 
 
 def start_server():
