@@ -30,12 +30,16 @@ JOB_STATUS_NAME = {
     STITCH_FAILED: "Stitch failed"
 }
 
+class ServerException(Exception):
+    pass
 
 def get_status_name(status):
-    try:
-        return JOB_STATUS_NAME[int(status)]
-    except KeyError:
-        pass
+    if status:   
+        try:
+            return JOB_STATUS_NAME[int(status)]
+        except KeyError:
+            pass
+    print("Could not get status name for {}".format(status))
     return JOB_STATUS_NAME[JOB_UNKNOWN]
 
 
@@ -43,14 +47,19 @@ def get_status_from_name(status_name):
     for status in JOB_STATUS_NAME:
         if status_name == JOB_STATUS_NAME[status]:
             return status
+    print("Could not get status name from name {}".format(status))
     return JOB_UNKNOWN
 
 
-def get_stitch_status(job):
+def get_stitch_status(job, url=STITCH_URL):
     status = query_stitch_job(job['id'])
+    print("Job status: {} Querying stitch job status: {}".format(job['id'], status))
     if not status:
         return job['status']
-    return status['status'] if job['status'] >= JOB_COMPLETE else job['status']
+    if job['id'] in status:
+        if 'status' in status[job['id']]:
+            return status[job['id']]['status'] if job['status'] >= JOB_COMPLETE else job['status']
+    return None
 
 
 def is_job_pollable(status):
@@ -78,7 +87,7 @@ def query_job(job_id, url=UNIGRID_URL):
     response = None
     try:
         response = json.loads(urllib2.urlopen(req).read())
-    except urllib2.HTTPError as e:
+    except (urllib2.HTTPError, urllib2.URLError):
         return None
 
     if 'status' in response:
@@ -90,7 +99,7 @@ def query_job(job_id, url=UNIGRID_URL):
     
 
 def query_stitch_job(job_id, url=STITCH_URL):
-	# GET request to the stitch server
+    # GET request to the stitch server
     stitch_url = "{}/stitch?{}".format(url, urllib.urlencode({'job_id': job_id}))
     request = urllib2.Request(stitch_url)
     
