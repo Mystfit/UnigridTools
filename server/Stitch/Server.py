@@ -233,6 +233,7 @@ class StitchRequestHandler(http.server.SimpleHTTPRequestHandler):
         if 'job_id' in args:
             if args['job_id'] in self.server.jobs:
                 return (HTTPStatus.OK, str.encode(self.server.jobs[args['job_id']].toJSON()))
+            return (HTTPStatus.NOT_FOUND,)
 
         return (HTTPStatus.OK, str.encode(json.dumps(self.server.jobs, cls=StitchJobEncoder)))
 
