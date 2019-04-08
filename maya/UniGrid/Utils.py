@@ -53,12 +53,18 @@ def get_status_from_name(status_name):
 
 def get_stitch_status(job, url=STITCH_URL):
     status = query_stitch_job(job['id'])
-    print("Job status: {} Querying stitch job status: {}".format(job['id'], status))
+    print("Job {}: Querying stitch status: {}".format(job['id'], status))
     if not status:
+        print('No stitch status returned. Returning job status instead')
         return job['status']
-    if job['id'] in status:
-        if 'status' in status[job['id']]:
-            return status[job['id']]['status'] if job['status'] >= JOB_COMPLETE else job['status']
+    if 'status' in status:
+        print('Found stitch job status {}'.format(status['status']))
+        if job['status'] >= JOB_COMPLETE:
+            print("Job status complete. Returning stitch status {} instead".format(status['status']))
+            return status['status']
+        else:
+            print("Job status not complete. Returning job status {}".format(job['status']))
+            return job['status']
     return None
 
 
@@ -102,7 +108,7 @@ def query_stitch_job(job_id, url=STITCH_URL):
     # GET request to the stitch server
     stitch_url = "{}/stitch?{}".format(url, urllib.urlencode({'job_id': job_id}))
     request = urllib2.Request(stitch_url)
-    
+    print("Querying stitch server for job {}".format(job_id))
     try:
         response = urllib2.urlopen(request)
     except urllib2.HTTPError as e:
@@ -121,4 +127,4 @@ def open_images_folder(job_id, user, *args):
     elif platform.system() == "Darwin":
         command.append('open')
         command.append(os.path.join("smb://uni-grid.mddn.vuw.ac.nz/uni-grid/renders", str(user), str(job_id), "images"))
-    subprocess.Popen(command, shell=True)
+    subprocess.Popen(command)

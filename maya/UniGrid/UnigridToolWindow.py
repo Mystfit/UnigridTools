@@ -16,7 +16,7 @@ from Singleton import Singleton
 import Utils
 
 
-STITCH_POLL_TIME = 5.0
+STITCH_POLL_TIME = 20.0
 
 @Singleton
 class UnigridToolWindow(object):
@@ -92,13 +92,13 @@ class UnigridToolWindow(object):
         self.export_selective_toggle = checkBox(label="Export static shapes seperately", changeCommand=self.export_selective_changed, value=False, parent=exported_layout)
         self.export_selective_layout = columnLayout(adjustableColumn=True, rowSpacing=row_spacing, columnAlign="left", parent=exported_layout)
         static_shapes_label = text(label="Static shapes", parent=self.export_selective_layout)
-        static_shape_nodes = textScrollList("static_shape_nodes", allowMultiSelection=True, height=100, parent=self.export_selective_layout)
+        self.static_shape_nodes = textScrollList("static_shape_nodes", allowMultiSelection=True, height=100, parent=self.export_selective_layout)
         add_static_shape_btn = button(label="Add static node", command=self.addStaticPressed, parent=self.export_selective_layout)
         remove_static_shape_btn = button(label="Remove static node", command=self.removeStaticPressed, parent=self.export_selective_layout)
 
         # Dynamic nodes to export
         animated_shapes_label = text(label="Per-frame shapes", parent=self.export_selective_layout)
-        animated_shape_nodes = textScrollList("animated_shape_nodes", allowMultiSelection=True, height=100, parent=self.export_selective_layout)
+        self.animated_shape_nodes = textScrollList("animated_shape_nodes", allowMultiSelection=True, height=100, parent=self.export_selective_layout)
         add_anim_shape_btn = button(label="Add animated node", command=self.addAnimPressed, parent=self.export_selective_layout)
         remove_anim_shape_btn = button(label="Remove animated node", command=self.removeAnimPressed, parent=self.export_selective_layout)
         self.export_selective_changed()
@@ -123,8 +123,7 @@ class UnigridToolWindow(object):
         # Existing jobs
         job_frame = frameLayout(collapsable=True, collapse=False, label="Scene jobs", marginHeight=2, marginWidth=2, parent=server_layout)
         job_layout = columnLayout(adjustableColumn=True, rowSpacing=row_spacing, columnAlign="left", parent=job_frame)
-        jobs_refresh = button(label='Refresh', parent=job_layout)
-        jobs_refresh.setCommand(self.refresh_pressed)
+        jobs_refresh = button(label='Refresh', command=self.refresh_pressed, parent=job_layout)
         
         self.job_scroll_min_height = 75
         self.job_scroll_max_height = 300
@@ -175,7 +174,12 @@ class UnigridToolWindow(object):
         self.password_field.setText("*" * len(self.password_field.getText()))
 
     def unigrid_data_dir(self):
-        return os.path.normpath(os.path.join(workspace.getPath(), 'data', 'unigrid'))
+        path = os.path.normpath(os.path.join(workspace.getPath(), 'data', 'unigrid'))
+        try:
+            os.makedirs(path)
+        except OSError as e:
+            pass
+        return path
 
     def clear_jobs_list(self):
         children = columnLayout(self.job_details_col_layout, query=True, childArray=True)
@@ -187,7 +191,7 @@ class UnigridToolWindow(object):
         row = rowLayout(parent=self.job_details_col_layout, numberOfColumns=5, columnAttach5=job_detail_align, columnAlign5=job_detail_align),
         text(label=job_id, font='plainLabelFont', align='left', width=self.job_details_col_spacing[0])
         text(label=user, font='plainLabelFont', align='left', width=self.job_details_col_spacing[1])
-        text(label='status', font='plainLabelFont', align='left', width=self.job_details_col_spacing[2])
+        text(label="", font='plainLabelFont', align='left', width=self.job_details_col_spacing[2])
         button(label='Open images folder', command=partial(Utils.open_images_folder, job_id, user))
         button(label='Delete job', command=partial(self.delete_job, job_id))
         self.resize_job_table(self)
@@ -306,7 +310,7 @@ class UnigridToolWindow(object):
         self.save_jobs(scene_name)
 
     def save_jobs(self, scene_name):
-        with open(os.path.join(self.unigrid_data_dir(), scene_name) + ".json", 'w+') as f:
+        with open(os.path.join(self.unigrid_data_dir(), scene_name) + ".json", "w+") as f:
             f.write(json.dumps(self.ran_jobs))
 
     def update_jobs(self, force=False):
@@ -321,7 +325,13 @@ class UnigridToolWindow(object):
                 continue
             row_job_id = text(row[0], query=True, label=True)
             row_job_user = text(row[1], query=True, label=True)
-            row_job_status = Utils.get_status_from_name(text(row[2], query=True, label=True))
+            row_job_status = Utils.JOB_UNKNOWN
+            row_job_status_text = text(row[2], query=True, label=True)
+            if not row_job_status_text:
+                row_job_status = Utils.get_status_from_name(Utils.get_status_name(Utils.JOB_UNKNOWN))
+            else:
+                row_job_status = Utils.get_status_from_name(row_job_status_text)
+
             if row_job_id in self.ran_jobs and (Utils.is_job_pollable(row_job_status) or force): 
                 # Query job status from Unigrid
                 job = Utils.query_job(row_job_id)
@@ -466,7 +476,7 @@ class UnigridToolWindow(object):
         frameLayout(self.debug_frame, edit=True, visible=not frameLayout(self.debug_frame, query=True, visible=True))
 
     def refresh_pressed(self, *args):
-        self.load_saved_jobs(os.path.basename(system.sceneName()))
+        # self.load_saved_jobs(os.path.basename(system.sceneName()))
         self.update_jobs(True)
 
     def exportPressed(self, *args):
