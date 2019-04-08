@@ -1,4 +1,7 @@
 # Uni-grid Tools
+
+This repository contains client and server side tools for the Uni-grid renderfarm.
+
 ## Maya plug-in installation
 #### Windows
   - Copy the folder `maya\plug-ins` to `Documents\maya\[YEAR]`
