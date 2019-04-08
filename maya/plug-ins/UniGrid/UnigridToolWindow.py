@@ -187,12 +187,13 @@ class UnigridToolWindow(object):
             deleteUI(row, control=True)
 
     def add_job_detail_row(self, job_id, user):
-        job_detail_align = ["left" for i in range(5)]
-        row = rowLayout(parent=self.job_details_col_layout, numberOfColumns=5, columnAttach5=job_detail_align, columnAlign5=job_detail_align),
+        job_detail_align = ["left" for i in range(6)]
+        row = rowLayout(parent=self.job_details_col_layout, numberOfColumns=6, columnAttach6=job_detail_align, columnAlign6=job_detail_align),
         text(label=job_id, font='plainLabelFont', align='left', width=self.job_details_col_spacing[0])
         text(label=user, font='plainLabelFont', align='left', width=self.job_details_col_spacing[1])
         text(label="", font='plainLabelFont', align='left', width=self.job_details_col_spacing[2])
-        button(label='Open images folder', command=partial(Utils.open_images_folder, job_id, user))
+        button(label='Open images folder', command=partial(self.open_images_folder_pressed, job_id, user))
+        button(label='Show image path', command=partial(self.show_image_folder, job_id, user))
         button(label='Delete job', command=partial(self.delete_job, job_id))
         self.resize_job_table(self)
         return rowLayout(row, query=True, childArray=True)
@@ -243,6 +244,28 @@ class UnigridToolWindow(object):
         job = Utils.query_job(job_id)
         self.update_job_detail_row(self.add_job_detail_row(job['id'], job['short_name']), job['id'], job['short_name'], Utils.get_stitch_status(job))
         self.save_jobs(scene_name)
+        
+    def open_images_folder_pressed(self, job_id, user, *args):
+        pword = self.password
+        if not pword:
+            result = promptDialog(
+                    title='Uni-grid Login',
+                    message='Enter the password for user {}:'.format(user),
+                    button=['OK', 'Cancel'],
+                    defaultButton='OK',
+                    cancelButton='Cancel',
+                    dismissString='Cancel')
+            if result == 'OK':
+                pword = promptDialog(query=True, text=True)
+            else:
+                return
+        
+        Utils.open_images_folder(job_id, user, pword)
+
+    def show_image_folder(self, job_id, user, *args):
+        msg = os.path.join("\\\\uni-grid.mddn.vuw.ac.nz\\uni-grid\\renders", str(user), str(job_id), "images")
+        print(msg)
+        confirmDialog(title="Uni-grid", message=msg)
 
     def delete_job(self, job_id, *args):
         # Freeze UI controls
@@ -252,7 +275,7 @@ class UnigridToolWindow(object):
         try:
             self.login(self.login_field.getText(), self.password)
         except Utils.ServerException as e:
-            confirmDialog(label="Uni-grid error", message=e)
+            confirmDialog(title="Uni-grid error", message=e)
             return
         
         # Login page sends us to job page by default

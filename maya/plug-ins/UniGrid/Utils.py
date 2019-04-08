@@ -118,12 +118,15 @@ def query_stitch_job(job_id, url=STITCH_URL):
     return json.loads(response.read())
 
 
-def open_images_folder(job_id, user, *args):
+def open_images_folder(job_id, user, passw, *args):
     print("Opening images folder for job {} and user {}".format(job_id, user))
     command = []
     if platform.system() == "Windows":
+        server_path = "\\\\uni-grid.mddn.vuw.ac.nz\\uni-grid"
+        mount_command = ['net', 'use', '/USER:MDDN\\{}'.format(user), str(server_path), str(passw)]
+        subprocess.Popen(mount_command)
         command.append('explorer')
-        command.append(os.path.join("\\\\uni-grid.mddn.vuw.ac.nz\\uni-grid\\renders", str(user), str(job_id), "images"))
+        command.append(os.path.join(server_path, 'renders', str(user), str(job_id), "images"))
     elif platform.system() == "Darwin":
         command.append('open')
         command.append(os.path.join("smb://uni-grid.mddn.vuw.ac.nz/uni-grid/renders", str(user), str(job_id), "images"))
