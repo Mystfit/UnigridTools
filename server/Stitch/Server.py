@@ -6,7 +6,7 @@ import urllib
 from pathlib import Path
 import urllib.parse as urlparse
 from urllib import request
-import sys, os, multiprocessing, threading, json, time, ssl
+import sys, os, multiprocessing, threading, json, time, ssl, copy
 from json import JSONEncoder
 
 try:
@@ -111,13 +111,17 @@ class StitchServer(HTTPServer):
     def process_stitch_commands(self):
         while self.running:
             stitch_job = self.stitch_queue.get(True)
-            self.stitcher.stitch(os.path.join(stitch_job.project_path, "manifest.json"), stitch_job.image_path, stitch_job.image_path)
+            try:
+                self.stitcher.stitch(os.path.join(stitch_job.project_path, "manifest.json"), stitch_job.image_path, stitch_job.image_path)
+            except Exception as e:
+                print("Stitch failed. Exception: {}".format(e))
             stitch_job.complete()
 
     def poll_jobs(self):
         while self.running:
             removed_jobs = set()
-            for job_id in self.watchlist:
+            poller_watchlist = copy.deepcopy(self.watchlist)
+            for job_id in poller_watchlist:
                 job_args = self.query_job(job_id)
                 if not job_args:
                     removed_jobs.add(job_id)

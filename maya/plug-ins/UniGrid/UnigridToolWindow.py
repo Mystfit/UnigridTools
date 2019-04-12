@@ -57,15 +57,15 @@ class UnigridToolWindow(object):
 
         job_path_attachments = ["left", "left", "right"]
         frame_bg = (0.286, 0.286, 0.286)
-        row_spacing = 4
+        self.row_spacing = 4
 
         # Exported objects
         exported_frame = frameLayout(collapse=True, collapsable=True, label="Export settings", marginHeight=2, marginWidth=2, parent=main_layout)
-        exported_layout = columnLayout(adjustableColumn=True, rowSpacing=row_spacing, columnAlign="left", parent=exported_frame)
+        exported_layout = columnLayout(adjustableColumn=True, rowSpacing=self.row_spacing, columnAlign="left", parent=exported_frame)
 
         # Tiles
         tile_frame = frameLayout(collapsable=True, collapse=False, label="Tiles", marginHeight=2, marginWidth=2, parent=exported_layout)
-        tile_layout = columnLayout(adjustableColumn=True, rowSpacing=row_spacing, columnAlign="left", parent=tile_frame)
+        tile_layout = columnLayout(adjustableColumn=True, rowSpacing=self.row_spacing, columnAlign="left", parent=tile_frame)
         self.dyn_tiles_toggle = checkBox(label="Dynamic tiles", value=False, visible=False, parent=tile_layout)
         rowcol_attachments = ["left" for i in range(4)]
         row_col_layout = rowLayout(parent=tile_layout, numberOfColumns=4, columnAttach4=rowcol_attachments, columnAlign4=rowcol_attachments)
@@ -90,7 +90,7 @@ class UnigridToolWindow(object):
 
         # Static nodes to export
         self.export_selective_toggle = checkBox(label="Export static shapes seperately", changeCommand=self.export_selective_changed, value=False, parent=exported_layout)
-        self.export_selective_layout = columnLayout(adjustableColumn=True, rowSpacing=row_spacing, columnAlign="left", parent=exported_layout)
+        self.export_selective_layout = columnLayout(adjustableColumn=True, rowSpacing=self.row_spacing, columnAlign="left", parent=exported_layout)
         static_shapes_label = text(label="Static shapes", parent=self.export_selective_layout)
         self.static_shape_nodes = textScrollList("static_shape_nodes", allowMultiSelection=True, height=100, parent=self.export_selective_layout)
         add_static_shape_btn = button(label="Add static node", command=self.addStaticPressed, parent=self.export_selective_layout)
@@ -105,7 +105,7 @@ class UnigridToolWindow(object):
 
         # Server frame        
         server_frame = frameLayout(collapsable=True, collapse=False, label="Server", marginHeight=2, marginWidth=2, parent=main_layout)
-        server_layout = columnLayout(adjustableColumn=True, rowSpacing=row_spacing, columnAlign="left", parent=server_frame)
+        server_layout = columnLayout(adjustableColumn=True, rowSpacing=self.row_spacing, columnAlign="left", parent=server_frame)
         
         # Login
         login_attachments = ["left" for i in range(6)]
@@ -122,13 +122,13 @@ class UnigridToolWindow(object):
 
         # Existing jobs
         job_frame = frameLayout(collapsable=True, collapse=False, label="Scene jobs", marginHeight=2, marginWidth=2, parent=server_layout)
-        job_layout = columnLayout(adjustableColumn=True, rowSpacing=row_spacing, columnAlign="left", parent=job_frame)
+        job_layout = columnLayout(adjustableColumn=True, rowSpacing=self.row_spacing, columnAlign="left", parent=job_frame)
         jobs_refresh = button(label='Refresh', command=self.refresh_pressed, parent=job_layout)
         
         self.job_scroll_min_height = 75
         self.job_scroll_max_height = 300
         self.job_scroll_layout = scrollLayout(childResizable=True, verticalScrollBarThickness=16, height=self.job_scroll_min_height, resizeCommand=self.resize_job_table, parent=job_layout)
-        self.job_details_col_layout = columnLayout(adjustableColumn=True, rowSpacing=row_spacing, columnAlign="left", parent=self.job_scroll_layout)
+        self.job_details_col_layout = columnLayout(adjustableColumn=True, rowSpacing=self.row_spacing, columnAlign="left", parent=self.job_scroll_layout)
 
         job_header_align = ["left" for i in range(4)]
         self.job_details_col_spacing = [50, 70, 100, 80]
@@ -145,7 +145,7 @@ class UnigridToolWindow(object):
 
         # Debug frame
         self.debug_frame = frameLayout(collapsable=True, visible=False, label="Debug", marginHeight=2, marginWidth=2, parent=main_layout)
-        debug_layout = columnLayout(adjustableColumn=True, rowSpacing=row_spacing, columnAlign="left", parent=self.debug_frame)
+        debug_layout = columnLayout(adjustableColumn=True, rowSpacing=self.row_spacing, columnAlign="left", parent=self.debug_frame)
 
         job_id_layout = rowLayout(parent=debug_layout, numberOfColumns=3, columnAttach3=job_path_attachments, columnAlign3=job_path_attachments, adjustableColumn=2)
         job_id_label = text(label='Job ID', parent=job_id_layout)
@@ -555,8 +555,8 @@ class UnigridToolWindow(object):
         missing_assets_win = window(title="Uni-grid export error", width=500, height=220)
         missing_assets_win.show()
 
-        layout = columnLayout(adjustableColumn=True, height=200, rowSpacing=row_spacing, columnAlign="left", parent=missing_assets_win)
-        text(label='The following nodes have missing external dependencies. Check your paths!\nClick to select', align="left", parent=layout)
+        layout = columnLayout(adjustableColumn=True, height=200, rowSpacing=self.row_spacing, columnAlign="left", parent=missing_assets_win)
+        text(label='The following nodes have missing external dependencies\nMake sure assets are relative to [PROJECT_FOLDER]/sourceimages!\nClick the entries below to inspect file paths.', align="left", parent=layout)
         missing_asset_list = textScrollList("missing_texture_list", height=200, parent=layout) 
         textScrollList(missing_asset_list, edit=True, sc=partial(goto_missing_asset, missing_asset_list))
         for asset in missing_asset_nodes:
