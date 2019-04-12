@@ -1,0 +1,44 @@
+BootStrap: docker
+From: debian:sid
+
+%post -c /bin/bash
+    apt-get update
+    apt-get install -y git bash
+
+    # Internal Singularity
+    apt-get -y install singularity-container
+
+    # Arnold
+    # aaaaaaaaaaah
+
+    # Python
+    apt-get install -y python3 python3-pip
+    pip3 install setuptools
+
+    # Python-OpenImageiO
+    apt-get install -y  python3-openimageio git
+
+    # Unigrid tools
+    if [ ! -d "./UnigridTools" ]; then 
+        git clone https://github.com/mystfit/UnigridTools.git
+    else
+        git -C ./UnigridTools pull
+    fi
+    cd ./UnigridTools/python
+    pip3 install .
+    cd ../../
+
+%runscript
+    echo "Entry points in this container, run with --app"
+    echo " - split_tiles -d depth -t threshold /path/to/manifest/dir"
+    echo " - start_stitch_server /path/to/unigrid"
+    echo " - stitch_tiles /path/to/manifest/dir"
+
+%apprun start_stitch_server
+    start_stitch_server "$@"
+
+%apprun stitch
+    stitch "$@"
+
+%apprun split
+    split "$@"
