@@ -89,6 +89,11 @@ class Stitcher(object):
             print("Waiting for workers to finish...")
 
 
+def run_stitcher(manifest_path, tiles_path, images_path):
+    stitcher = Stitcher(num_worker_threads)
+    stitcher.stitch(manifest_path, tiles_path, images_path)
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 4:
         message_str = ""
@@ -102,4 +107,4 @@ if __name__ == "__main__":
     images_path = sys.argv[3]
     num_worker_threads = int(sys.argv[4])
     stitcher = Stitcher(num_worker_threads)
-    stitcher.stitch(manifest_path, tiles_path, images_path)
+    stitcher.run_stitcher(manifest_path, tiles_path, images_path)
