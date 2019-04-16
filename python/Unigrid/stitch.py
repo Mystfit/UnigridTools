@@ -6,6 +6,8 @@ import os
 import platform
 import json
 import sys
+import multiprocessing
+import argparse
 
 try:
     import Queue as queue
@@ -89,9 +91,16 @@ class Stitcher(object):
             print("Waiting for workers to finish...")
 
 
-def run_stitcher(manifest_path, tiles_path, images_path):
-    stitcher = Stitcher(num_worker_threads)
-    stitcher.stitch(manifest_path, tiles_path, images_path)
+def run_stitcher():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('manifest', help='Input manifest file')
+    parser.add_argument('-i', '--input-tiles', required=True, default=None, type=str, help='Directory containing input tiles to stitch')
+    parser.add_argument('-o', '--output-images', required=True, default=None, type=str, help='Directory output images will be saved to')
+    parser.add_argument('-t', '--threads', default=multiprocessing.cpu_count(), type=int, help='Number of threads for stitching frames (1 frame per thread)')
+
+    args = parser.parse_args()
+    stitcher = Stitcher(args.threads)
+    stitcher.stitch(args.manifest, args.input_tiles, args.output_images)
 
 
 if __name__ == "__main__":

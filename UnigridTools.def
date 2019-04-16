@@ -1,0 +1,73 @@
+BootStrap: docker
+From: debian:sid
+
+%environment
+    PYTHONPATH=/opt/arnold/python
+    export PYTHONPATH
+
+%files
+    python /UnigridTools
+
+%post -c /bin/bash
+    apt-get update
+    apt-get install -y git bash wget unzip
+    
+    # Python3
+    apt-get install -y python3 python3-pip python
+
+    # Arnold SDK
+    apt-get -y install python less libx11-6
+    wget https://www.arnoldrenderer.com/dynamic_resources/product_downloads/2765/files/Arnold-5.3.0.2-linux.tgz
+    mkdir /opt/arnold
+    tar -zxf Arnold-5.3.0.2-linux.tgz -C /opt/arnold
+    rm Arnold-5.3.0.2-linux.tgz
+
+    # MtoA
+    wget https://www.arnoldrenderer.com/dynamic_resources/product_downloads/2780/files/MtoA-3.2.0.2-linux-2019.run
+    chmod +x ./MtoA-3.2.0.2-linux-2019.run
+    ./MtoA-3.2.0.2-linux-2019.run --tar -xf ./package.zip
+    mkdir /opt/arnold/MtoA
+    unzip -d /opt/arnold/MtoA package.zip
+    rm ./MtoA-3.2.0.2-linux-2019.run
+    rm package.zip
+
+    # Python-OpenImageiO
+    apt-get install -y python3-openimageio git
+
+    # Setuptools and pip
+    pip3 install setuptools
+    wget https://bootstrap.pypa.io/get-pip.py
+    python get-pip.py
+    rm ./get-pip.py
+
+    # Unigrid tools
+    cd /UnigridTools
+    pip3 install .
+    cd ..
+
+    # DEV Bind paths
+    mkdir /test-project
+    mkdir /Unigrid
+
+%runscript
+    echo "Entry points in this container, run with --app"
+    echo " - kick"
+    echo " - render_heatmaps"
+    echo " - split_tiles"
+    echo " - start_stitch_server"
+    echo " - stitch_tiles"
+
+%apprun kick
+    /opt/arnold/bin/kick "$@"
+
+%apprun render_heatmaps
+    render_heatmaps -kc /usr/local/bin/kick "$@"
+
+%apprun split
+    split_tiles "$@"
+
+%apprun start_stitch_server
+    start_stitch_server "$@"
+
+%apprun stitch
+    stitch_tiles "$@"
