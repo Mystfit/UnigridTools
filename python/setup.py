@@ -10,7 +10,8 @@ setuptools.setup(name='Unigrid',
         'console_scripts':
             ['start_stitch_server = Unigrid.server:start_server',
             'stitch_tiles = Unigrid.stitch:run_stitcher',
-            'split_tiles = Unigrid.split:run_splitter'
+            'split_tiles = Unigrid.split:run_splitter',
+            'render_heatmaps = Unigrid.render:run_render_heatmaps',
             ]
         },
 )
