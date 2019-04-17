@@ -1,0 +1,3 @@
+[submodule "bldr-core"]
+	path = bldr-core
+	url = git@shiny.mddn.vuw.ac.nz:/users/git/repo/bldr-core.git
