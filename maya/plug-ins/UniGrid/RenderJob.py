@@ -34,12 +34,10 @@ class RenderJob(object):
         self.manifest["kick_flags"] = {}
         self.camera = kwargs["cam"] if "cam" in kwargs else None
         self.ass_filename_prefix = os.path.basename(os.path.splitext(sceneName())[0])
-        self.default_args = {'asciiAss': True}
         self.file_extension = os.path.splitext(rendering.renderSettings(firstImageName=True)[0])[1][1:]
         self.zip_path = self.wd + ".zip"
         self.missing_textures = []
         self.default_resource_args = { 
-            "asciiAss": True,
             "cam": self.camera.name()
         }
 
@@ -59,6 +57,9 @@ class RenderJob(object):
         workspace.mkdir(self.wd_ass)
         Utils.cleanup_folder(self.wd_textures)
         Utils.cleanup_folder(self.wd_procedurals)
+
+        # Clean ass folder (all scenes)
+        Utills.cleanup_folder(os.path.normpath(os.path.join(self.wd, "ass")))
         Utils.cleanup_folder(self.wd_ass)
 
     def init_render_options(self):
@@ -73,6 +74,7 @@ class RenderJob(object):
         # Save original Arnold settings
         self.orig_absTexOpt = self.arnold_opts.absoluteTexturePaths.get()
         self.orig_abortOnLicenseFail = self.arnold_opts.abortOnLicenseFail.get()
+        self.orig_use_binary_ass = self.arnold_opts.binaryAss.get()
 
         # Set Arnold properties
         self.arnold_opts.absoluteTexturePaths.set(0)
@@ -110,6 +112,10 @@ class RenderJob(object):
         if self.animated_nodes:
             anim_nodes = self.animated_nodes
             animated_resource_args["s"] = True
+
+        if not self.orig_use_binary_ass:
+            animated_resource_args["asciiAss"] = True
+
         animated_resource_args.update(self.default_resource_args)
 
         # Export animated resources
