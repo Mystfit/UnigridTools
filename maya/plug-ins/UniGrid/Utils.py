@@ -1,5 +1,7 @@
 import os, shutil, json, subprocess, platform
 import urllib2, urllib, httplib
+import contextlib
+import maya.app.renderSetup.model.renderSetup as renderSetup
 
 UNIGRID_URL = "https://uni-grid.mddn.vuw.ac.nz"
 UNIGRID_LOGIN_URL = UNIGRID_URL + "/login"
@@ -131,3 +133,20 @@ def open_images_folder(job_id, user, passw, *args):
         command.append('open')
         command.append(os.path.join("smb://uni-grid.mddn.vuw.ac.nz/uni-grid/renders", str(user), str(job_id), "images"))
     subprocess.Popen(command)
+
+
+@contextlib.contextmanager
+def maintained_render_layer():
+    previous_rs = renderSetup.instance().getVisibleRenderLayer()
+    try:
+        yield
+    finally:
+        renderSetup.instance().switchToLayer(previous_rs)
+
+
+def get_renderable_layers():
+    renderable_layers = [layer for layer in renderSetup.instance().getRenderLayers() if layer.isRenderable()]
+    defaultLayer = renderSetup.instance().getDefaultRenderLayer()
+    if defaultLayer.isRenderable():
+        renderable_layers.append(defaultLayer)
+    return renderable_layers

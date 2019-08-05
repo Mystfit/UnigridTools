@@ -4,6 +4,7 @@ from shutil import copy2, make_archive
 from pymel.core import *
 from arnold import *
 import Utils
+import maya.app.renderSetup.model.renderSetup as renderSetup
 
 
 class RenderJobException(Exception):
@@ -96,12 +97,20 @@ class RenderJob(object):
             raise MissingAssetException(self.missing_textures)
 
     def export_scene(self):
+        # Export render layers individually
+        with Utils.maintained_render_layer():
+            for renderable_layer in Utils.get_renderable_layers():
+                renderSetup.instance().switchToLayer(renderable_layer)
+                self.ai_export()
+
+    def ai_export(self):
         MAYA_COLOUR_MANAGER = 2048
 
         # Create frame args
+        layer = renderSetup.instance().getVisibleRenderLayer()
         frame = int(currentTime(query=True))
         animated_resource_args = {
-            "f": "{}.{}".format(os.path.normpath(os.path.join(self.anim_path, self.ass_filename_prefix)), str(frame).zfill(4)),
+            "f": "{}.{}.{}".format(os.path.normpath(os.path.join(self.anim_path, self.ass_filename_prefix)), layer.name(), str(frame).zfill(4)),
             "mask": AI_NODE_ALL ^ MAYA_COLOUR_MANAGER
         }
 
@@ -120,9 +129,9 @@ class RenderJob(object):
         resolution = ls('defaultResolution')[0]
         tiles = []
         if self.dynamic_tiles:
-            tiles = self.export_tiles(frame, 1, 1, resolution.width.get(), resolution.height.get())
+            tiles = self.export_tiles(frame, layer, 1, 1, resolution.width.get(), resolution.height.get())
         else:
-            tiles = self.export_tiles(frame, self.rows, self.cols, resolution.width.get(), resolution.height.get())
+            tiles = self.export_tiles(frame, layer, self.rows, self.cols, resolution.width.get(), resolution.height.get())
 
         # Group frame/tile resources into manifest
         self.manifest["frames"].append({
@@ -133,7 +142,7 @@ class RenderJob(object):
             "tiles": tiles
         })
 
-    def export_tiles(self, frame, rows, cols, width, height):
+    def export_tiles(self, frame, layer, rows, cols, width, height):
         tile_width = abs(width / cols)
         tile_height = abs(height / rows)
         tile_leftover_width = width % cols
@@ -155,7 +164,7 @@ class RenderJob(object):
                 # Export tile
                 coords = [tile_left, tile_top, tile_right, tile_bottom]
                 tiles.append({
-                    "outfile": "{}_tile_{}-{}.{}.{}".format(os.path.relpath(os.path.join(self.tile_path, self.ass_filename_prefix), self.wd), col, row, str(frame).zfill(4), self.file_extension),
+                    "outfile": "{}_tile_{}-{}.{}.{}.{}".format(os.path.relpath(os.path.join(self.tile_path, self.ass_filename_prefix), self.wd), col, row, layer.name(), str(frame).zfill(4), self.file_extension),
                     "coords": coords,
                     "kick_flags": {
                         "rg": " ".join(str(tile) for tile in coords)
