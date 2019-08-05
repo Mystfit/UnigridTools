@@ -22,6 +22,12 @@ From: debian:sid
     tar -zxf Arnold-5.3.0.2-linux.tgz -C /opt/arnold
     rm Arnold-5.3.0.2-linux.tgz
 
+    # Download Nvidia drivers
+    # wget http://us.download.nvidia.com/XFree86/Linux-x86_64/430.09/NVIDIA-Linux-x86_64-430.09.run
+    
+    # Warm up Arnold GPU cache
+    /opt/arnold/bin/kick -gpu_warm
+
     # MtoA
     wget https://www.arnoldrenderer.com/dynamic_resources/product_downloads/2780/files/MtoA-3.2.0.2-linux-2019.run
     chmod +x ./MtoA-3.2.0.2-linux-2019.run

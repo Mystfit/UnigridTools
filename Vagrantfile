@@ -1,14 +1,7 @@
-Vagrant.configure('2') do |config|
-  # Base VM options
-  eval File.read('bldr-core/VagrantFile.template')
+require "./vagrant/modules/vagrantBase.rb"
+require "./vagrant/modules/vagrantUnigrid.rb"
 
-  # VM specific options
-  config.vm.define :unigridtools do |unigridtools_config|
-      unigridtools_config.vm.hostname = :unigridtools
-      unigridtools_config.vm.provision "shell", inline: <<-SHELL
-        pushd /vagrant
-        sudo /usr/local/bin/singularity build UnigridTools.sif UnigridTools.def
-        popd
-      SHELL
-  end
+Vagrant.configure('2') do |config|
+  vagrantBase config
+  vagrantUnigrid config
 end
