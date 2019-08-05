@@ -445,7 +445,9 @@ class UnigridToolWindow(object):
         scene_name = os.path.basename(system.sceneName())
         self.br.set_value(self.email_field.getText(), name="job[email]")
         self.br.set_value(scene_name, name="job[scene]")
-        self.br.set_value(str(self.start_frame.getValue()), name="job[start_frame]")
+
+        # Fixed start frame at 1 so the server can index into the manifest correctly
+        self.br.set_value("1", name="job[start_frame]")
         self.br.set_value(str(len(Utils.get_renderable_layers()) * self.cols.getValue() * self.rows.getValue() * ((self.end_frame.getValue() - self.start_frame.getValue() + 1))), name="job[end_frame]")
         self.br.form.add_file(open(job.zip_path, 'rb'), 'application/zip', job.zip_path, name="job[project_zip]")
         res = self.br.submit()

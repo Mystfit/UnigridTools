@@ -40,7 +40,6 @@ class RenderJob(object):
         self.zip_path = self.wd + ".zip"
         self.missing_textures = []
         self.default_resource_args = { 
-            "asciiAss": True,
             "cam": self.camera.name()
         }
 
@@ -72,6 +71,7 @@ class RenderJob(object):
         self.default_render_globals = ls('defaultRenderGlobals')[0]
 
         # Save original Arnold settings
+        self.orig_use_binary_ass = self.arnold_opts.binaryAss.get()
         self.orig_absTexOpt = self.arnold_opts.absoluteTexturePaths.get()
         self.orig_abortOnLicenseFail = self.arnold_opts.abortOnLicenseFail.get()
 
@@ -119,6 +119,10 @@ class RenderJob(object):
         if self.animated_nodes:
             anim_nodes = self.animated_nodes
             animated_resource_args["s"] = True
+
+        if not self.orig_use_binary_ass:
+            animated_resource_args["asciiAss"] = True
+        
         animated_resource_args.update(self.default_resource_args)
 
         # Export animated resources
