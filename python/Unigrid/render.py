@@ -21,7 +21,7 @@ def build_kick_command(kick, flags, token_values):
         command = command.replace(token, value) 
     return command
 
-def render(kick, frame, flags, ass_files, project_path, destination):
+def render(kick, flags, ass_files, project_path, destination):
     # Per file token replacements
     token_values = {
         "<PROJECT_PATH>": project_path,
@@ -37,7 +37,7 @@ def render(kick, frame, flags, ass_files, project_path, destination):
     command = build_kick_command(kick, flags, token_values)
     call(command.split(" "))
 
-def render_heatmaps(kick_cmd, frame, area, flags, maniest_dir, destination):
+def render_heatmaps(kick_cmd, frame, area, flags, resources, manifest_dir, destination):
     # Calculate resized heatmap size using total area
     aspect = float(frame["res_x"]) / float(frame["res_y"])
     height = math.sqrt(area / aspect)
@@ -45,16 +45,16 @@ def render_heatmaps(kick_cmd, frame, area, flags, maniest_dir, destination):
     print("Heatmap Aspect: {} Width: {} Height: {}".format(aspect, width, height))
 
     heatmap_frame_path = str(os.path.join(destination, frame["outfile"]))
-    ass_files = [os.path.normpath(os.path.join(maniest_dir, ass_scene)) for ass_scene in frame["resources"]]
 
     # Render cpu tilemaps
     flags["set"]["options.xres"] = math.floor(width)
     flags["set"]["options.yres"] = math.floor(height)
-    render(kick_cmd, frame, flags, ass_files, maniest_dir, heatmap_frame_path)
+    render(kick_cmd, frame, flags, resources, manifest_dir, heatmap_frame_path)
 
 def run_render_heatmaps():
     parser = argparse.ArgumentParser()
     parser.add_argument('manifest', help='Input manifest file')
+    parser.add_argument('-hm,', '--heatmaps', default=False, type=bool, help='Render heatmaps')
     parser.add_argument('-kc', '--kick-cmd', default="kick", type=str, help='Kick command')
     parser.add_argument('-f', '--frame', default=None, type=int, help='Frame to render')
     parser.add_argument('-o', '--output-dir', default=os.path.join(os.getcwd(), "heatmaps"), help='Output heatmap dir')
@@ -74,9 +74,21 @@ def run_render_heatmaps():
         framelist = []
 
         if args.frame:
-            framelist.append(manifest["frames"][args.frame])
+            framelist.append(manifest["frames"][args.frame]["tiles"])
         else:
             framelist = manifest["frames"]
-        
+
         for frame in framelist:
-            render_heatmaps(args.kick_cmd, frame, args.area, manifest["kick_flags"], manifest_dir, args.output_dir)
+            resources = [os.path.normpath(os.path.join(manifest_dir, ass_scene)) for ass_scene in frame["resources"]]
+
+            for tile in frame["tiles"]:
+                print(tile)
+                flags = manifest["kick_flags"]
+                flags.update(tile["kick_flags"])
+                if args.heatmaps:
+                    render_heatmaps(args.kick_cmd, args.area, flags, resources, manifest_dir, args.output_dir)
+                else:
+                    render(args.kick_cmd, flags, resources, manifest_dir, str(os.path.join(args.output_dir, tile["outfile"])))
+
+if __name__ == "__main__":
+    run_render_heatmaps()
