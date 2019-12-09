@@ -242,7 +242,7 @@ class UnigridToolWindow(object):
     def store_job(self, job_id, scene_name):
         self.ran_jobs.append(job_id)
         job = Utils.query_job(job_id)
-        self.update_job_detail_row(self.add_job_detail_row(job['id'], job['short_name']), job['id'], job['short_name'], Utils.get_stitch_status(job))
+        self.update_job_detail_row(self.add_job_detail_row(job['id'], job['short_name']), job['id'], job['short_name'], Utils.get_stitch_status(job, self.stitch_url.getText()))
         self.save_jobs(scene_name)
         
     def open_images_folder_pressed(self, job_id, user, *args):
@@ -322,7 +322,7 @@ class UnigridToolWindow(object):
             if not job:
                 pruned_jobs.append(job_id)
                 continue
-            self.update_job_detail_row(self.add_job_detail_row(job['id'], job['short_name']), job['id'], job['short_name'], Utils.get_stitch_status(job))
+            self.update_job_detail_row(self.add_job_detail_row(job['id'], job['short_name']), job['id'], job['short_name'], Utils.get_stitch_status(job, self.stitch_url.getText()))
         for job_id in pruned_jobs:
             try:
                 self.ran_jobs.remove(job_id)
@@ -362,7 +362,7 @@ class UnigridToolWindow(object):
                     self.remove_job_detail_row(row_job_id)
                     continue
 
-                self.update_job_detail_row(row, row_job_id, job['short_name'], Utils.get_stitch_status(job))
+                self.update_job_detail_row(row, row_job_id, job['short_name'], Utils.get_stitch_status(job, self.stitch_url.getText()))
 
     def export(self):
         print("Exporting...")

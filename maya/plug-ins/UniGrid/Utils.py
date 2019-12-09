@@ -54,7 +54,7 @@ def get_status_from_name(status_name):
 
 
 def get_stitch_status(job, url=STITCH_URL):
-    status = query_stitch_job(job['id'])
+    status = query_stitch_job(job['id'], url)
     print("Job {}: Querying stitch status: {}".format(job['id'], status))
     if not status:
         print('No stitch status returned. Returning job status instead')
